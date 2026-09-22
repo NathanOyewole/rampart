@@ -119,7 +119,7 @@ fn load_agent<'a>(info: &AccountInfo<'a>, vault_key: &Pubkey) -> Result<Agent> {
     if info.data_is_empty() {
         return err!(ErrorCode::NotAgent);
     }
-    let mut data: &[u8] = &info.try_borrow_data()?[8..];
+    let mut data: &[u8] = &info.try_borrow_data()?;
     let agent = match Agent::try_deserialize(&mut data) {
         Ok(agent) => agent,
         Err(_) => return err!(ErrorCode::NotAgent),
