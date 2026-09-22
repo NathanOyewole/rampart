@@ -113,6 +113,74 @@ gate are both on-chain.
 - `policy_change_requires_timelock`
 - `treasury_self_destination_blocked`
 
+## Live on devnet (watch the drain get blocked)
+
+Rampart is deployed and demoing on **Solana devnet**:
+
+| Entity | Address | Explorer |
+|---|---|---|
+| Rampart program | `6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr` | [program](https://explorer.solana.com/address/6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr?cluster=devnet) |
+| Oracle-mock program (deterministic feed) | `2xbNzbkEZ65hLzi9TgdMBcncup6a5CA1qi3QLVTrwQ2p` | [program](https://explorer.solana.com/address/2xbNzbkEZ65hLzi9TgdMBcncup6a5CA1qi3QLVTrwQ2p?cluster=devnet) |
+| Demo sponsor wallet (owner) | `2QXPxqAR41JEDdPgdQp2MX3S4F26xNAX4uDn2sqtvS5h` | [wallet](https://explorer.solana.com/address/2QXPxqAR41JEDdPgdQp2MX3S4F26xNAX4uDn2sqtvS5h?cluster=devnet) |
+
+The web dashboard runs the whole story against devnet in one click — **RUN
+DEMO** creates a fresh sponsored vault, a demo agent fires a scripted series of
+spends, and every guard either honors the intent or rejects it **on-chain**. The
+run ends with 8 accepted + 7 blocked, each blocked step tagged with its Solana
+error name (`PerTxCapExceeded`, `DestinationNotAllowed`, `PriceDeviationTooHigh`,
+`VaultFrozen`, `Unauthorized`…) and a per-step explorer tx link.
+
+Notable beats to watch:
+
+1. **Per-tx cap** — agent tries to send more than the $50/tx cap → `PerTxCapExceeded`.
+2. **Oracle pump** — the feed is pushed $200 → $204; the agent's $50 spend now
+   deviates past the 100 bps band → `PriceDeviationTooHigh`.
+3. **Non-allowlisted destination** — the agent tries a random address →
+   `DestinationNotAllowed`.
+4. **Freeze** — the owner flips the kill switch; the *same* agent key that could
+   previously spend now gets `VaultFrozen` on every attempt.
+5. **Jailbroken agent** — the agent key tries to withdraw vault funds / unfreeze →
+   `Unauthorized` (only the owner's key can do those).
+6. **Daily cap** — cumulative spend crosses the $200/epoch cap → `DailyCapExceeded`.
+7. **Timelock** — a proposed policy change is not yet effective → `PolicyNotEffective`.
+
+Run it locally:
+
+```bash
+cd client
+pnpm install
+pnpm run build:web
+pnpm start        # http://localhost:8788
+```
+
+Each RUN sponsors a fresh runner wallet (funded from the sponsor), so it is
+repeatable — re-running never collides with a previous vault.
+
+## Deploy as a public web app
+
+One long-running Node process (Express) serves both the SPA and the API, so a
+host is just "build + start". **No serverless functions** — the demo run keeps
+2+ minutes of on-chain transactions open, which would blow past serverless
+timeouts (Vercel is not recommended for RUN; use a long-running host).
+
+1. Build: `cd client && pnpm install && pnpm run build:web`.
+2. Start: `pnpm start` (honors `$PORT`).
+3. Env:
+   - `RAMPART_WALLET_B64` — base64 of `target/deploy/devnet-wallet.json` (lets the
+     host run without a wallet file on disk).
+   - `RAMPART_RPC` — optional, defaults to the public devnet endpoint.
+   - `PORT` — the platform assigns it.
+4. Produce the base64 on any machine:
+
+```powershell
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content target/deploy/devnet-wallet.json -Raw).Trim()))
+```
+
+Pxxl setup: Build command `pnpm install` → Start command `pnpm start`, Project
+Port = the app's `$PORT` (e.g. 3000). After launch verify `/healthz`, `/`, then
+a full RUN. Railway/Fly.io are equivalent. The sponsor wallet needs devnet SOL
+(the public faucet works); any devnet activity is free testnet funds.
+
 ## Build & test
 
 The SBF build + the full 13-test suite run in CI
@@ -127,11 +195,15 @@ cargo +stable-x86_64-pc-windows-gnu test -p rampart --lib   # unit tests
 ```
 
 Interactive testing (deploy + transact) uses the CI-built `rampart.so` against a
-Solana validator or devnet — see the demo-agent docs.
+Solana validator or devnet — the "Live on devnet" section above runs the full
+story. A local validator works on this box via the agave 2.x toolchain
+(see `docs/agave-2x-windows.md` if that pops up again).
 
-## Program ID
+## Program IDs (devnet)
 
-`6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr` (Anchor 1.2 / Solana 4.3.0)
+- Rampart: `6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr`
+- Oracle-mock: `2xbNzbkEZ65hLzi9TgdMBcncup6a5CA1qi3QLVTrwQ2p`
+- Demo sponsor: `2QXPxqAR41JEDdPgdQp2MX3S4F26xNAX4uDn2sqtvS5h`
 
 ## Repo layout
 
@@ -149,9 +221,12 @@ programs/rampart/tests/          litesvm integration suite
 
 ## Roadmap
 
-- **Swap path** (Jupiter CPI) — currently the MVP proves the thesis with the
-  transfer path fully enforced on-chain; the swap path is the next iteration.
+- **Swap path** (Jupiter CPI) — the MVP proves the thesis with the transfer path
+  fully enforced on-chain; the swap path (priced against the same on-chain Pyth
+  feed, capped the same way) is the next iteration.
 - **Guard daemon** — off-chain monitor that watches spends and can trigger the
   owner kill switch.
-- **Demo agent** — a script that signs intents as the agent and showcases the
-  drain being blocked live on devnet.
+- **Squads multisig** — escalate big-tx approval to a multisig PDA for sub-owners.
+- **Mainnet** — go-live story is audit-first: threat-model doc, external review,
+  property/fuzz tests, upgrade-authority step-down, staged TVL rollout. The
+  hackathon build stays on devnet.
