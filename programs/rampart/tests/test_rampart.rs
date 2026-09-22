@@ -233,7 +233,7 @@ fn setup() -> TestEnv {
 
     let program_id = rampart::id();
     let vault = pda(&program_id, &[VAULT_SEED, owner.pubkey().as_ref()]);
-    let treasury = pda(&program_id, &[TREASURY_SEED, vault.as_ref()]);
+    let treasury = pda(&system_program::ID, &[TREASURY_SEED, vault.as_ref()]);
     let policy = pda(&program_id, &[POLICY_SEED, vault.as_ref()]);
     let spend_tracker = pda(&program_id, &[SPEND_SEED, vault.as_ref()]);
 
