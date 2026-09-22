@@ -46,7 +46,11 @@ pub fn handle_guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Re
         return err!(ErrorCode::AmountZero);
     }
 
-    let agent_account = load_agent(ctx.accounts.agent_account.as_ref(), &ctx.accounts.vault.key())?;
+    let agent_account = load_agent(
+        ctx.accounts.agent_account.as_ref(),
+        &ctx.accounts.vault.key(),
+        &ctx.accounts.agent.key(),
+    )?;
 
     let policy = &ctx.accounts.policy;
     let destination = ctx.accounts.destination.key();
@@ -115,8 +119,15 @@ pub fn handle_guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Re
     Ok(())
 }
 
-fn load_agent<'a>(info: &AccountInfo<'a>, vault_key: &Pubkey) -> Result<Agent> {
+fn load_agent<'a>(info: &AccountInfo<'a>, vault_key: &Pubkey, agent_key: &Pubkey) -> Result<Agent> {
     if info.data_is_empty() {
+        return err!(ErrorCode::NotAgent);
+    }
+    let (expected_pda, _) = Pubkey::find_program_address(
+        &[AGENT_SEED, vault_key.as_ref(), agent_key.as_ref()],
+        &crate::id(),
+    );
+    if expected_pda != info.key() {
         return err!(ErrorCode::NotAgent);
     }
     let mut data: &[u8] = &info.try_borrow_data()?;
@@ -124,7 +135,7 @@ fn load_agent<'a>(info: &AccountInfo<'a>, vault_key: &Pubkey) -> Result<Agent> {
         Ok(agent) => agent,
         Err(_) => return err!(ErrorCode::NotAgent),
     };
-    if agent.key != info.key() || agent.vault != *vault_key {
+    if agent.vault != *vault_key || agent.key != *agent_key {
         return err!(ErrorCode::NotAgent);
     }
     if !agent.active {
