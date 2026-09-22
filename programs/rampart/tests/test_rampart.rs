@@ -339,7 +339,7 @@ fn daily_cap_enforced_and_resets_by_epoch() {
     let before = treasury_lamports(&env);
     env.svm.warp_to_slot(400);
     assert_custom(
-        guarded_transfer(&mut env, 5_000_000_000, dest, feed),
+        guarded_transfer(&mut env, 4_000_000_000, dest, feed),
         E_DAILY_CAP,
     );
     assert_eq!(treasury_lamports(&env), before);
