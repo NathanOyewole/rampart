@@ -1,0 +1,23 @@
+{
+  "version": "0.1.0",
+  "name": "oracle_mock",
+  "address": "2xbNzbkEZ65hLzi9TgdMBcncup6a5CA1qi3QLVTrwQ2p",
+  "instructions": [
+    {
+      "name": "setPrice",
+      "accounts": [
+        { "name": "feed", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "price", "type": "i64" },
+        { "name": "expo", "type": "i32" },
+        { "name": "status", "type": "u8" }
+      ]
+    }
+  ],
+  "types": [],
+  "errors": [
+    { "code": 6000, "name": "FeedTooShort", "msg": "feed account is too short to hold a Pyth price" }
+  ]
+}

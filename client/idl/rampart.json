@@ -1,0 +1,203 @@
+{
+  "version": "0.1.0",
+  "name": "rampart",
+  "address": "6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr",
+  "instructions": [
+    {
+      "name": "initVault",
+      "accounts": [
+        { "name": "owner", "isMut": true, "isSigner": true },
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "policy", "isMut": true, "isSigner": false },
+        { "name": "spendTracker", "isMut": true, "isSigner": false },
+        { "name": "priceFeed", "isMut": false, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "dailyUsdCapMicro", "type": "u64" },
+        { "name": "perTxUsdCapMicro", "type": "u64" }
+      ]
+    },
+    {
+      "name": "deposit",
+      "accounts": [
+        { "name": "owner", "isMut": true, "isSigner": true },
+        { "name": "vault", "isMut": false, "isSigner": false },
+        { "name": "treasury", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    },
+    {
+      "name": "withdraw",
+      "accounts": [
+        { "name": "owner", "isMut": true, "isSigner": true },
+        { "name": "vault", "isMut": false, "isSigner": false },
+        { "name": "treasury", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    },
+    {
+      "name": "registerAgent",
+      "accounts": [
+        { "name": "owner", "isMut": true, "isSigner": true },
+        { "name": "agent", "isMut": false, "isSigner": true },
+        { "name": "vault", "isMut": false, "isSigner": false },
+        { "name": "agentAccount", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "unregisterAgent",
+      "accounts": [
+        { "name": "owner", "isMut": false, "isSigner": true },
+        { "name": "vault", "isMut": false, "isSigner": false },
+        { "name": "agentAccount", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "freeze",
+      "accounts": [
+        { "name": "owner", "isMut": false, "isSigner": true },
+        { "name": "vault", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "unfreeze",
+      "accounts": [
+        { "name": "owner", "isMut": false, "isSigner": true },
+        { "name": "vault", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "proposePolicy",
+      "accounts": [
+        { "name": "owner", "isMut": false, "isSigner": true },
+        { "name": "vault", "isMut": false, "isSigner": false },
+        { "name": "policy", "isMut": true, "isSigner": false }
+      ],
+      "args": [
+        { "name": "dailyUsdCapMicro", "type": "u64" },
+        { "name": "perTxUsdCapMicro", "type": "u64" },
+        { "name": "maxSlippageBps", "type": "u16" },
+        { "name": "epochLenSlots", "type": "u64" },
+        { "name": "allowlist", "type": { "vec": "publicKey" } }
+      ]
+    },
+    {
+      "name": "applyPolicy",
+      "accounts": [
+        { "name": "owner", "isMut": false, "isSigner": true },
+        { "name": "vault", "isMut": false, "isSigner": false },
+        { "name": "policy", "isMut": true, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "guardedTransfer",
+      "accounts": [
+        { "name": "agent", "isMut": false, "isSigner": true },
+        { "name": "agentAccount", "isMut": true, "isSigner": false },
+        { "name": "vault", "isMut": true, "isSigner": false },
+        { "name": "policy", "isMut": true, "isSigner": false },
+        { "name": "spendTracker", "isMut": true, "isSigner": false },
+        { "name": "destination", "isMut": true, "isSigner": false },
+        { "name": "priceFeed", "isMut": false, "isSigner": false },
+        { "name": "treasury", "isMut": true, "isSigner": false },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [{ "name": "amount", "type": "u64" }]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Vault",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "owner", "type": "publicKey" },
+          { "name": "treasuryBump", "type": "u8" },
+          { "name": "bump", "type": "u8" },
+          { "name": "frozen", "type": "bool" },
+          { "name": "referencePrice", "type": "i64" },
+          { "name": "referenceExpo", "type": "i32" },
+          { "name": "timelockSlots", "type": "u64" }
+        ]
+      }
+    },
+    {
+      "name": "Policy",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "vault", "type": "publicKey" },
+          { "name": "dailyUsdCapMicro", "type": "u64" },
+          { "name": "perTxUsdCapMicro", "type": "u64" },
+          { "name": "maxSlippageBps", "type": "u16" },
+          { "name": "epochLenSlots", "type": "u64" },
+          { "name": "allowlistLen", "type": "u32" },
+          { "name": "allowlist", "type": { "array": ["publicKey", 16] } },
+          { "name": "pendingExists", "type": "bool" },
+          { "name": "pendingDailyUsdCapMicro", "type": "u64" },
+          { "name": "pendingPerTxUsdCapMicro", "type": "u64" },
+          { "name": "pendingMaxSlippageBps", "type": "u16" },
+          { "name": "pendingEpochLenSlots", "type": "u64" },
+          { "name": "pendingEffectiveSlot", "type": "u64" },
+          { "name": "pendingAllowlistLen", "type": "u32" },
+          { "name": "pendingAllowlist", "type": { "array": ["publicKey", 16] } }
+        ]
+      }
+    },
+    {
+      "name": "SpendTracker",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "vault", "type": "publicKey" },
+          { "name": "epochSlot", "type": "u64" },
+          { "name": "spentUsdMicro", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "Agent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "vault", "type": "publicKey" },
+          { "name": "key", "type": "publicKey" },
+          { "name": "active", "type": "bool" }
+        ]
+      }
+    }
+  ],
+  "types": [],
+  "errors": [
+    { "code": 6000, "name": "Unauthorized", "msg": "Only the vault owner can perform this action" },
+    { "code": 6001, "name": "VaultFrozen", "msg": "The vault is frozen" },
+    { "code": 6002, "name": "NotAgent", "msg": "Caller is not a registered agent of this vault" },
+    { "code": 6003, "name": "AgentInactive", "msg": "The agent has been deactivated" },
+    { "code": 6004, "name": "DestinationNotAllowed", "msg": "Destination is not allowlisted" },
+    { "code": 6005, "name": "TreasuryDestination", "msg": "Destination cannot be the vault treasury" },
+    { "code": 6006, "name": "AmountZero", "msg": "Transfer amount must be greater than zero" },
+    { "code": 6007, "name": "PerTxCapExceeded", "msg": "Per-transaction USD cap exceeded" },
+    { "code": 6008, "name": "DailyCapExceeded", "msg": "Daily USD cap exceeded" },
+    { "code": 6009, "name": "FeedTooShort", "msg": "Pyth price account is too short to decode" },
+    { "code": 6010, "name": "InvalidPrice", "msg": "Pyth price is non-positive" },
+    { "code": 6011, "name": "PriceHalted", "msg": "Pyth price feed is not trading" },
+    { "code": 6012, "name": "PriceExponentInvalid", "msg": "Price exponent is out of the supported range" },
+    { "code": 6013, "name": "PriceDeviationTooHigh", "msg": "Live price deviates from vault reference price beyond slippage" },
+    { "code": 6014, "name": "InvalidCap", "msg": "Cap values must be greater than zero" },
+    { "code": 6015, "name": "AllowlistTooLarge", "msg": "Allowlist exceeds maximum size" },
+    { "code": 6016, "name": "PolicyNotEffective", "msg": "Policy change is not yet effective" },
+    { "code": 6017, "name": "NoPendingPolicy", "msg": "No pending policy change" },
+    { "code": 6018, "name": "MathOverflow", "msg": "Integer overflow during price math" },
+    { "code": 6019, "name": "InsufficientBalance", "msg": "Amount exceeds vault balance" }
+  ]
+}
