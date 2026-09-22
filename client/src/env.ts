@@ -26,6 +26,16 @@ export const PYTH_MIN_DATA_LEN = 0x45;
 export const STATUS_TRADING = 1;
 
 export function loadPayer(): Keypair {
+  const b64 = process.env.RAMPART_WALLET_B64;
+  if (b64) {
+    const decoded = Buffer.from(b64, "base64");
+    try {
+      const parsed = JSON.parse(decoded.toString("utf8"));
+      return Keypair.fromSecretKey(Uint8Array.from(parsed));
+    } catch {
+      return Keypair.fromSecretKey(Uint8Array.from(decoded));
+    }
+  }
   const path = process.env.RAMPART_WALLET ?? "../target/deploy/devnet-wallet.json";
   const raw = readFileSync(path, "utf8");
   return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(raw)));

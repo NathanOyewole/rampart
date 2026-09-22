@@ -6,6 +6,7 @@
   "scripts": {
     "demo": "tsx src/demo-cli.ts",
     "server": "tsx server/index.ts",
+    "start": "tsx server/index.ts",
     "build:web": "vite build",
     "dev:web": "vite",
     "typecheck": "tsc --noEmit"
