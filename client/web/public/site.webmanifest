@@ -1,0 +1,15 @@
+{
+  "name": "Rampart · policy vaults for trading agents",
+  "short_name": "Rampart",
+  "description": "On-chain policy vaults for trading agents. The agent wallet has zero authority over vault funds.",
+  "theme_color": "#0b0d10",
+  "background_color": "#0b0d10",
+  "display": "standalone",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
