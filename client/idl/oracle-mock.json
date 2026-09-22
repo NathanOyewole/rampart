@@ -6,18 +6,49 @@
     {
       "name": "setPrice",
       "accounts": [
-        { "name": "feed", "isMut": true, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false }
+        {
+          "name": "feed",
+          "writable": true,
+          "signer": false
+        },
+        {
+          "name": "systemProgram",
+          "writable": false,
+          "signer": false
+        }
       ],
       "args": [
-        { "name": "price", "type": "i64" },
-        { "name": "expo", "type": "i32" },
-        { "name": "status", "type": "u8" }
+        {
+          "name": "price",
+          "type": "i64"
+        },
+        {
+          "name": "expo",
+          "type": "i32"
+        },
+        {
+          "name": "status",
+          "type": "u8"
+        }
+      ],
+      "discriminator": [
+        16,
+        19,
+        182,
+        8,
+        149,
+        83,
+        72,
+        181
       ]
     }
   ],
   "types": [],
   "errors": [
-    { "code": 6000, "name": "FeedTooShort", "msg": "feed account is too short to hold a Pyth price" }
+    {
+      "code": 6000,
+      "name": "FeedTooShort",
+      "msg": "feed account is too short to hold a Pyth price"
+    }
   ]
 }

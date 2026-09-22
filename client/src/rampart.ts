@@ -12,6 +12,7 @@ import {
   SystemProgram,
   Transaction,
   LAMPORTS_PER_SOL,
+  Signer,
 } from "@solana/web3.js";
 import { readFileSync } from "node:fs";
 import { KeypairWallet } from "./wallet.js";
@@ -75,6 +76,32 @@ export function makeProvider(payer: Keypair, rpc: string = RPC_URL) {
     new KeypairWallet(payer) as unknown as Wallet,
     { commitment: "confirmed", skipPreflight: false }
   );
+  const original = provider.sendAndConfirm.bind(provider);
+  provider.sendAndConfirm = async (
+    tx: Transaction,
+    signers?: Signer[],
+    options?: Parameters<AnchorProvider["sendAndConfirm"]>[2]
+  ) => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (attempt > 0) {
+        const blockhash = await connection.getLatestBlockhash("confirmed");
+        tx.recentBlockhash = blockhash.blockhash;
+        tx.feePayer ??= payer.publicKey;
+        tx.signatures = [];
+        tx.partialSign(payer, ...(signers ?? []));
+      }
+      try {
+        return await original(tx, signers, options);
+      } catch (e) {
+        if (!(e instanceof Error) || !e.message.includes("was not confirmed")) {
+          throw e;
+        }
+        lastErr = e;
+      }
+    }
+    throw lastErr;
+  };
   return { connection, provider };
 }
 

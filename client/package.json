@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "demo": "tsx src/demo.ts",
+    "demo": "tsx src/demo-cli.ts",
     "server": "tsx server/index.ts",
     "build:web": "vite build",
     "dev:web": "vite",
