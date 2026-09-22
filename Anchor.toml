@@ -1,0 +1,19 @@
+skip_local_validator = true
+
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+rampart = "6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr"
+
+[provider]
+cluster = "localnet"
+wallet = '~\.config/solana/id.json'
+
+[scripts]
+test = "cargo test"
+
+[hooks]

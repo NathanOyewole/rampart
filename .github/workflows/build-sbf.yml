@@ -1,0 +1,37 @@
+name: build-sbf
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup default 1.89.0
+          rustup component add rustfmt
+
+      - name: Install Solana CLI + cargo-build-sbf
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v4.3.0/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          cargo-build-sbf --version
+
+      - name: Build SBF program
+        run: cargo-build-sbf --manifest-path programs/rampart/Cargo.toml
+
+      - name: Run litesvm tests
+        run: cargo test -p rampart
+
+      - name: Upload program artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rampart-so
+          path: target/deploy/rampart.so
+          if-no-files-found: error
