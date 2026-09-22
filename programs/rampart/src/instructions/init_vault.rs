@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
 
 use crate::constants::*;
 use crate::error::ErrorCode;
@@ -84,7 +83,7 @@ pub fn handle_init_vault(
 pub fn treasury_bump(vault_key: &Pubkey) -> Result<u8> {
     let (_, bump) = Pubkey::find_program_address(
         &[TREASURY_SEED, vault_key.as_ref()],
-        &system_program::ID,
+        &crate::id(),
     );
     Ok(bump)
 }
@@ -92,7 +91,7 @@ pub fn treasury_bump(vault_key: &Pubkey) -> Result<u8> {
 pub fn treasury_pubkey(vault_key: &Pubkey, bump: u8) -> Pubkey {
     Pubkey::create_program_address(
         &[TREASURY_SEED, vault_key.as_ref(), &[bump]],
-        &system_program::ID,
+        &crate::id(),
     )
     .unwrap()
 }

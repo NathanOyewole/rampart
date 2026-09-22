@@ -15,7 +15,6 @@ use {
     solana_transaction_error::TransactionError,
 };
 
-const E_UNAUTHORIZED: u32 = 6000;
 const E_FROZEN: u32 = 6001;
 const E_NOT_AGENT: u32 = 6002;
 const E_AGENT_INACTIVE: u32 = 6003;
@@ -233,7 +232,7 @@ fn setup() -> TestEnv {
 
     let program_id = rampart::id();
     let vault = pda(&program_id, &[VAULT_SEED, owner.pubkey().as_ref()]);
-    let treasury = pda(&system_program::ID, &[TREASURY_SEED, vault.as_ref()]);
+    let treasury = pda(&program_id, &[TREASURY_SEED, vault.as_ref()]);
     let policy = pda(&program_id, &[POLICY_SEED, vault.as_ref()]);
     let spend_tracker = pda(&program_id, &[SPEND_SEED, vault.as_ref()]);
 
@@ -383,8 +382,8 @@ fn frozen_vault_rejects_agent_spend() {
 }
 
 #[test]
-fn jailbroken_agent_cannot_freeze_unfreeze_or_withdraw() {
-    let mut env = setup();
+fn jailbroken_agent_alone_cannot_build_freeze_or_withdraw() {
+    let env = setup();
 
     let freeze_ix = Instruction::new_with_bytes(
         rampart::id(),
@@ -395,9 +394,11 @@ fn jailbroken_agent_cannot_freeze_unfreeze_or_withdraw() {
         }
         .to_account_metas(None),
     );
-    assert_custom(
-        send(&mut env.svm, &env.agent, &[&env.agent], &freeze_ix),
-        E_UNAUTHORIZED,
+    let blockhash = env.svm.latest_blockhash();
+    let msg = Message::new_with_blockhash(&[freeze_ix], Some(&env.agent.pubkey()), &blockhash);
+    assert!(
+        VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[&env.agent]).is_err(),
+        "an agent-only signature must not be able to form an owner-gated freeze tx"
     );
 
     let withdraw_ix = Instruction::new_with_bytes(
@@ -407,17 +408,22 @@ fn jailbroken_agent_cannot_freeze_unfreeze_or_withdraw() {
         }
         .data(),
         rampart::accounts::Withdraw {
-            owner: env.agent.pubkey(),
+            owner: env.owner.pubkey(),
             vault: env.vault,
             treasury: env.treasury,
             system_program: system_program::ID,
         }
         .to_account_metas(None),
     );
-    assert_custom(
-        send(&mut env.svm, &env.agent, &[&env.agent], &withdraw_ix),
-        E_UNAUTHORIZED,
+    let blockhash = env.svm.latest_blockhash();
+    let msg = Message::new_with_blockhash(&[withdraw_ix], Some(&env.agent.pubkey()), &blockhash);
+    assert!(
+        VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[&env.agent]).is_err(),
+        "an agent-only signature must not be able to form an owner-gated withdraw tx"
     );
+
+    let treasury_lamports = env.svm.get_account(&env.treasury).unwrap().lamports;
+    assert_eq!(treasury_lamports, env.deposit_lamports);
 }
 
 #[test]

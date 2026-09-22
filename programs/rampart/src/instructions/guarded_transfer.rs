@@ -1,4 +1,4 @@
-use anchor_lang::prelude::*;
+use anchor_lang::{prelude::*, AccountDeserialize};
 use anchor_lang::system_program;
 
 use crate::constants::*;
@@ -12,13 +12,10 @@ use super::init_vault::treasury_pubkey;
 #[derive(Accounts)]
 pub struct GuardedTransfer<'info> {
     pub agent: Signer<'info>,
-    #[account(
-        mut,
-        has_one = vault,
-        constraint = agent_account.key == agent.key() @ ErrorCode::NotAgent,
-        constraint = agent_account.active @ ErrorCode::AgentInactive,
-    )]
-    pub agent_account: Account<'info, Agent>,
+    /// CHECK: agent registry PDA; existence + contents validated in handler so a
+    /// never-registered key reports NotAgent instead of a generic anchor error.
+    #[account(mut)]
+    pub agent_account: UncheckedAccount<'info>,
     #[account(
         mut,
         constraint = !vault.frozen @ ErrorCode::VaultFrozen,
@@ -48,6 +45,8 @@ pub fn handle_guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Re
     if amount == 0 {
         return err!(ErrorCode::AmountZero);
     }
+
+    let agent_account = load_agent(ctx.accounts.agent_account.as_ref(), &ctx.accounts.vault.key())?;
 
     let policy = &ctx.accounts.policy;
     let destination = ctx.accounts.destination.key();
@@ -97,6 +96,8 @@ pub fn handle_guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Re
     }
     tracker.spent_usd_micro = new_spent;
 
+    drop(agent_account);
+
     let vault_key = ctx.accounts.vault.key();
     let treasury_bump = ctx.accounts.vault.treasury_bump;
     let seeds: &[&[u8]] = &[TREASURY_SEED, vault_key.as_ref(), &[treasury_bump]];
@@ -112,4 +113,22 @@ pub fn handle_guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Re
     system_program::transfer(cpi, amount)?;
 
     Ok(())
+}
+
+fn load_agent<'a>(info: &AccountInfo<'a>, vault_key: &Pubkey) -> Result<Agent> {
+    if info.data_is_empty() {
+        return err!(ErrorCode::NotAgent);
+    }
+    let mut data: &[u8] = &info.try_borrow_data()?[8..];
+    let agent = match Agent::try_deserialize(&mut data) {
+        Ok(agent) => agent,
+        Err(_) => return err!(ErrorCode::NotAgent),
+    };
+    if agent.key != info.key() || agent.vault != *vault_key {
+        return err!(ErrorCode::NotAgent);
+    }
+    if !agent.active {
+        return err!(ErrorCode::AgentInactive);
+    }
+    Ok(agent)
 }
