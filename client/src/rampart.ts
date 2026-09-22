@@ -165,6 +165,11 @@ export function describeError(e: unknown): ErrDesc {
       const last = m[m.length - 1].match(/(\d+)/)?.[0];
       if (last) return { code: Number(last) };
     }
+    const hex = logs.join("\n").match(/custom program error: 0x([0-9a-fA-F]+)/g);
+    if (hex && hex.length) {
+      const last = hex[hex.length - 1].match(/0x([0-9a-fA-F]+)/)?.[1];
+      if (last) return { code: parseInt(last, 16) };
+    }
     const nm = logs.join("\n").match(/ProgramError:\s*(.+)/);
     if (nm) return { name: nm[1].trim() };
   }

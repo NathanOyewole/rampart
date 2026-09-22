@@ -62,6 +62,9 @@ const priceRaw = (usd: number) => Math.round(usd * 1e8);
 const sol = (n: number) => Math.round(n * LAMPORTS_PER_SOL);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const FUND_SOL = 3;
+const FUND_FEE_RESERVE_SOL = 0.005;
+
 export class RampartDemo {
   client: RampartClient;
   cfg: DemoConfig;
@@ -219,7 +222,55 @@ export class RampartDemo {
     this.steps = [];
     this.seq = 0;
 
+    const sponsor = this.client;
+    const sponsorKey = sponsor.payer.publicKey;
+
+    const runner = Keypair.generate();
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: sponsorKey,
+        toPubkey: runner.publicKey,
+        lamports: sol(FUND_SOL),
+      })
+    );
+    this.rec("info", "sponsor funds runner wallet", `${FUND_SOL} SOL → ${runner.publicKey.toBase58().slice(0, 8)}… (fresh owner + fee payer, so RUN is repeatable)`);
+    await sponsor.provider.sendAndConfirm(fundTx);
+
+    this.client = new RampartClient(runner, sponsor.connection.rpcEndpoint);
     const c = this.client;
+
+    const reclaim = async () => {
+      if (!this.vault) return;
+      try {
+        const v = await c.fetchVault(this.vault);
+        if (v.frozen) {
+          await c.unfreeze(this.vault);
+        }
+        const treasury = treasuryPubkey(this.vault, (v as { treasuryBump: number }).treasuryBump);
+        const tBal = await c.connection.getBalance(treasury);
+        if (tBal > 0) {
+          const sig = await c.withdraw(this.vault, tBal);
+          this.rec("info", "runner reclaims treasury", `withdrew ${(tBal / LAMPORTS_PER_SOL).toFixed(3)} SOL back to runner`, { tx: sig });
+        }
+      } catch {
+        /* best effort */
+      }
+      try {
+        const rBal = await c.connection.getBalance(runner.publicKey);
+        const refund = rBal - sol(FUND_FEE_RESERVE_SOL);
+        if (refund > 0) {
+          const sig = await c.provider.sendAndConfirm(
+            new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: runner.publicKey, toPubkey: sponsorKey, lamports: refund })
+            )
+          );
+          this.rec("info", "runner refunds sponsor", `returned ${(refund / LAMPORTS_PER_SOL).toFixed(3)} SOL`, { tx: sig });
+        }
+      } catch {
+        /* best effort */
+      }
+    };
+
     try {
       const dest = await this.ensureDestination();
       this.rec("info", "destination account", `created ${dest.toBase58()}`);
@@ -331,8 +382,10 @@ export class RampartDemo {
 
       const finalState = await this.readState();
       this.rec("info", "final position", `treasury ${Number(finalState.treasuryBalance ?? 0).toFixed(3)} SOL · spent $${finalState.spend?.spentUsd ?? "—"}`);
+      await reclaim();
       this.status = "done";
     } catch (e) {
+      await reclaim();
       this.status = "failed";
       this.error = String(e);
       throw e;
