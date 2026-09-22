@@ -8,6 +8,7 @@ skip-lint = false
 
 [programs.localnet]
 rampart = "6Ea4SqpMwVE57cghBU4LqhZBSs573cQ8o8FXDitKUHEr"
+oracle_mock = "2xbNzbkEZ65hLzi9TgdMBcncup6a5CA1qi3QLVTrwQ2p"
 
 [provider]
 cluster = "localnet"

@@ -17,12 +17,13 @@ jobs:
           rustup default 1.89.0
           rustup component add rustfmt
 
-      - name: Install Solana CLI + build SBF program
+      - name: Install Solana CLI + build SBF programs
         run: |
           sh -c "$(curl -sSfL https://release.anza.xyz/v4.3.0/install)"
           export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
           cargo-build-sbf --version
           cargo-build-sbf --manifest-path programs/rampart/Cargo.toml
+          cargo-build-sbf --manifest-path programs/oracle-mock/Cargo.toml
 
       - name: Run litesvm tests
         run: cargo test -p rampart
@@ -32,4 +33,11 @@ jobs:
         with:
           name: rampart-so
           path: target/deploy/rampart.so
+          if-no-files-found: error
+
+      - name: Upload oracle-mock artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-mock-so
+          path: target/deploy/oracle_mock.so
           if-no-files-found: error
