@@ -18,8 +18,10 @@ jobs:
           rustup component add rustfmt
 
       - name: Install Solana CLI + cargo-build-sbf
+        run: sh -c "$(curl -sSfL https://release.anza.xyz/v4.3.0/install)"
+
+      - name: Verify toolchain
         run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v4.3.0/install)"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           cargo-build-sbf --version
 
