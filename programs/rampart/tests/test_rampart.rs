@@ -345,9 +345,15 @@ fn daily_cap_enforced_and_resets_by_epoch() {
     assert_eq!(treasury_lamports(&env), before);
 
     env.svm.warp_to_slot(200 + EPOCH_SLOTS + 1);
+    let before_rollover = treasury_lamports(&env);
     expect_ok(
-        guarded_transfer(&mut env, 5_000_000_000, dest, feed),
+        guarded_transfer(&mut env, 6_000_000_000, dest, feed),
         "spend after epoch rollover",
+    );
+    assert_eq!(
+        treasury_lamports(&env),
+        before_rollover - 6_000_000_000,
+        "daily cap must reset at epoch rollover"
     );
 }
 
