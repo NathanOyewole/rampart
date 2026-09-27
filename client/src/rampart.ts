@@ -397,6 +397,38 @@ export class RampartClient {
       .rpc();
   }
 
+  // Same guard flow as guardedTransfer, priced off a live Meteora DBC pool
+  // instead of a Pyth feed. Requires the on-chain program to have the
+  // guarded_dbc_transfer instruction (branch feat/meteora-dbc-guard) and a
+  // regenerated IDL that includes it.
+  async guardedDbcTransfer(
+    vault: PublicKey,
+    agent: Keypair,
+    destination: PublicKey,
+    dbcPool: PublicKey,
+    dbcConfig: PublicKey,
+    amountLamports: number
+  ) {
+    const v = await this.fetchVault(vault);
+    const treasury = treasuryPubkey(vault, v.treasuryBump);
+    return this.program.methods
+      .guardedDbcTransfer(new BN(amountLamports))
+      .accounts({
+        agent: agent.publicKey,
+        agentAccount: agentPda(vault, agent.publicKey),
+        vault,
+        policy: policyPda(vault),
+        spendTracker: spendPda(vault),
+        destination,
+        dbcPool,
+        dbcConfig,
+        treasury,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([agent])
+      .rpc();
+  }
+
   async withdrawAs(vault: PublicKey, signerKp: Keypair, amountLamports: number) {
     const v = await this.fetchVault(vault);
     const treasury = treasuryPubkey(vault, v.treasuryBump);

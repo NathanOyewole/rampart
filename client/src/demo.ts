@@ -1,7 +1,7 @@
 import { Keypair, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { RampartClient, describeError, spendPda, treasuryPubkey } from "./rampart.js";
-import { microToUsd, usdFromPyth } from "./env.js";
+import { microToUsd, usdFromPyth, DBC_POOL, DBC_CONFIG } from "./env.js";
 import { policyPda } from "./rampart.js";
 
 export type StepStatus = "ok" | "rejected" | "info" | "error";
@@ -56,6 +56,8 @@ const ERR_NAMES = new Map<number, string>([
   [6017, "NoPendingPolicy"],
   [6018, "MathOverflow"],
   [6019, "InsufficientBalance"],
+  [6020, "NotADbcPool"],
+  [6021, "PoolTooEarly"],
 ]);
 
 const priceRaw = (usd: number) => Math.round(usd * 1e8);
@@ -362,6 +364,25 @@ export class RampartDemo {
         () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.95)),
         { expectReject: true }
       );
+
+      if (DBC_POOL && DBC_CONFIG) {
+        this.rec(
+          "info",
+          "DBC guard: curve-progress check pending",
+          "progress accessor is still a placeholder (open item) — fails safe, so the next step is expected to block as PoolTooEarly until it's wired to the real field"
+        );
+        await this.attempt(
+          "guard: DBC-priced transfer",
+          () => c.guardedDbcTransfer(vault, agent, dest, DBC_POOL, DBC_CONFIG, sol(0.05)),
+          { expectReject: true }
+        );
+      } else {
+        this.rec(
+          "info",
+          "DBC guard step skipped",
+          "no RAMPART_DBC_POOL / RAMPART_DBC_CONFIG configured for this environment"
+        );
+      }
 
       await this.attempt("owner freezes vault", () => c.freeze(vault));
 
