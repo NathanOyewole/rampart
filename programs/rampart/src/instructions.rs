@@ -1,5 +1,6 @@
 pub mod apply_policy;
 pub mod deposit;
+pub mod guarded_dbc_transfer;
 pub mod guarded_transfer;
 pub mod init_vault;
 pub mod propose_policy;
@@ -10,6 +11,7 @@ pub mod withdraw;
 
 pub use apply_policy::*;
 pub use deposit::*;
+pub use guarded_dbc_transfer::*;
 pub use guarded_transfer::*;
 pub use init_vault::*;
 pub use propose_policy::*;

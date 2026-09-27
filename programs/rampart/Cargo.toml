@@ -22,6 +22,8 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "1.2.0"
+dynamic-bonding-curve = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve" }
+dynamic-bonding-curve-sdk = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve" }
 
 [dev-dependencies]
 litesvm = "0.10.0"
