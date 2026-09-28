@@ -5,6 +5,7 @@ use crate::constants::*;
 use crate::dbc;
 use crate::error::ErrorCode;
 use crate::math;
+use crate::pyth;
 use crate::state::*;
 
 use super::init_vault::treasury_pubkey;
@@ -30,9 +31,14 @@ pub struct GuardedDbcTransfer<'info> {
     /// CHECK: destination must be allowlisted.
     #[account(mut)]
     pub destination: UncheckedAccount<'info>,
-    /// CHECK: Meteora DBC VirtualPool account, read-only, deserialized in handler.
+    /// CHECK: pyth SOL/USD price feed account, read-only. Used for USD valuation
+    /// and the reference-price deviation check, exactly as in guarded_transfer.
+    pub price_feed: UncheckedAccount<'info>,
+    /// CHECK: Meteora DBC VirtualPool account, read-only. Owner is verified and
+    /// the account is deserialized in the handler.
     pub dbc_pool: UncheckedAccount<'info>,
-    /// CHECK: Meteora DBC PoolConfig account, read-only, deserialized in handler.
+    /// CHECK: Meteora DBC PoolConfig account, read-only. Owner is verified and
+    /// the account is deserialized in the handler.
     pub dbc_config: UncheckedAccount<'info>,
     /// CHECK: system-owned treasury PDA.
     #[account(
@@ -69,23 +75,52 @@ pub fn handle_guarded_dbc_transfer(ctx: Context<GuardedDbcTransfer>, amount: u64
         return err!(ErrorCode::InsufficientBalance);
     }
 
-    let clock = Clock::get()?;
+    // --- Meteora DBC pool gates -------------------------------------------
+    // Both accounts must be owned by the DBC program, otherwise the agent could
+    // hand in a self-made account crafted to look like a healthy pool.
+    if *ctx.accounts.dbc_pool.owner != dynamic_bonding_curve::ID
+        || *ctx.accounts.dbc_config.owner != dynamic_bonding_curve::ID
+    {
+        return err!(ErrorCode::NotADbcPool);
+    }
+    // The owner decides which pools an agent may reference: the pool address
+    // must be in the policy allowlist, same list used for destinations.
+    let pool_key = ctx.accounts.dbc_pool.key();
+    let pool_allowed = (0..policy.allowlist_len)
+        .any(|i| policy.allowlist[i as usize] == pool_key);
+    if !pool_allowed {
+        return err!(ErrorCode::PoolNotAllowed);
+    }
 
+    let clock = Clock::get()?;
     let pool_data = ctx.accounts.dbc_pool.try_borrow_data()?;
     let config_data = ctx.accounts.dbc_config.try_borrow_data()?;
-    let price = dbc::decode_dbc_price(
+    let snapshot = dbc::inspect_dbc_pool(
         &pool_data,
         &config_data,
+        &ctx.accounts.dbc_config.key(),
+        amount,
         clock.unix_timestamp as u64,
         clock.slot,
     )?;
     drop(pool_data);
     drop(config_data);
 
-    if price.progress_bps < MIN_DBC_PROGRESS_BPS {
+    if snapshot.progress_bps < MIN_DBC_PROGRESS_BPS {
         return err!(ErrorCode::PoolTooEarly);
     }
+    if snapshot.price_impact_bps > policy.max_slippage_bps as u64 {
+        return err!(ErrorCode::PoolPriceImpactTooHigh);
+    }
 
+    // --- Pyth SOL/USD checks: identical to guarded_transfer ---------------
+    let feed_data = ctx.accounts.price_feed.try_borrow_data()?;
+    let price = pyth::decode_price(&feed_data)?;
+    drop(feed_data);
+
+    if price.expo != ctx.accounts.vault.reference_expo {
+        return err!(ErrorCode::PriceExponentInvalid);
+    }
     let dev = math::deviation_bps(price.price, ctx.accounts.vault.reference_price)?;
     if dev > policy.max_slippage_bps as u64 {
         return err!(ErrorCode::PriceDeviationTooHigh);

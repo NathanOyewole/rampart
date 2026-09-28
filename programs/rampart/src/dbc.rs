@@ -1,94 +1,89 @@
 use anchor_lang::prelude::*;
-use anchor_lang::AccountDeserialize;
 
 use dynamic_bonding_curve::state::{PoolConfig, VirtualPool};
-use dynamic_bonding_curve_sdk::quote::quote_exact_in;
+use dynamic_bonding_curve_sdk::quote_exact_in::quote_exact_in;
 
 use crate::error::ErrorCode;
 
-/// Amount of quote-mint base units used purely to probe the curve for an
-/// effective spot price. This is NOT the agent's actual trade size — it's a
-/// small fixed reference amount so the derived price is stable and cheap to
-/// compute. Denominated in the quote mint's smallest unit.
-pub const PRICE_PROBE_QUOTE_AMOUNT: u64 = 1_000_000;
-
-/// Fixed-point scale used for the derived price, chosen so it can be fed
-/// straight into `math::to_usd_micro` / `math::deviation_bps` the same way a
-/// Pyth (price, expo) pair is.
-pub const DBC_PRICE_EXPO: i32 = -6;
-
-pub struct DbcPrice {
-    pub price: i64,
-    pub expo: i32,
-    /// Curve progress toward migration, in basis points (0 = just created,
-    /// 10_000 = fully graduated into DAMM v2).
-    ///
-    /// OPEN ITEM: the exact field/method exposed by `VirtualPool` for this
-    /// varies by crate version — confirm against the installed version's
-    /// docs/IDL (`cargo doc -p dynamic-bonding-curve --open`) before relying
-    /// on this in production. `pool_progress_bps` below is a placeholder
-    /// that must be wired to the real field/helper.
+/// Health readings taken from a live Meteora DBC pool. Both values are ratios,
+/// so they are unit-free: no oracle is needed for a token that has no price
+/// feed yet, and there is no exponent to reconcile with the vault's Pyth
+/// reference.
+pub struct DbcSnapshot {
+    /// Curve progress toward migration in basis points:
+    /// quote_reserve / migration_quote_threshold, capped at 10_000.
     pub progress_bps: u16,
+    /// Price impact of buying `quote_amount` on the curve, in basis points,
+    /// computed from the pool's sqrt price before/after via Meteora's own
+    /// quote math (`quote_exact_in`). Assumes the pool's quote mint is SOL /
+    /// wSOL (9 decimals) so `quote_amount` can be expressed in lamports.
+    pub price_impact_bps: u64,
 }
 
-/// Decode a live DBC pool + its config into an effective spot price and
-/// curve-progress reading, using Meteora's own quote math rather than
-/// hand-rolled curve arithmetic.
-pub fn decode_dbc_price(
+/// Deserialize a DBC `VirtualPool` + `PoolConfig` pair and read its health.
+///
+/// The caller is responsible for verifying both accounts are owned by the DBC
+/// program before passing their bytes in. This function verifies the pool
+/// actually belongs to the supplied config, so an agent can't mix a healthy
+/// config with a different pool.
+pub fn inspect_dbc_pool(
     pool_data: &[u8],
     config_data: &[u8],
+    config_key: &Pubkey,
+    quote_amount: u64,
     current_timestamp: u64,
     current_slot: u64,
-) -> Result<DbcPrice> {
+) -> Result<DbcSnapshot> {
     let mut pool_slice: &[u8] = pool_data;
-    let pool =
-        VirtualPool::try_deserialize(&mut pool_slice).map_err(|_| error!(ErrorCode::NotADbcPool))?;
+    let pool = VirtualPool::try_deserialize(&mut pool_slice)
+        .map_err(|_| error!(ErrorCode::NotADbcPool))?;
 
     let mut config_slice: &[u8] = config_data;
     let config = PoolConfig::try_deserialize(&mut config_slice)
         .map_err(|_| error!(ErrorCode::NotADbcPool))?;
 
+    // Copy fields out by value (zero-copy structs; avoid holding references).
+    let pool_config_key: Pubkey = pool.config;
+    if pool_config_key != *config_key {
+        return err!(ErrorCode::NotADbcPool);
+    }
+
+    let reserve: u64 = pool.quote_reserve;
+    let threshold: u64 = config.migration_quote_threshold;
+    let current_sqrt: u128 = pool.sqrt_price;
+    if threshold == 0 || current_sqrt == 0 {
+        return err!(ErrorCode::NotADbcPool);
+    }
+
+    let progress = ((reserve as u128) * 10_000 / (threshold as u128)).min(10_000);
+
+    // Errors here also cover "curve already complete" and "pool not active".
     let quote = quote_exact_in(
         &pool,
         &config,
-        false, // probing quote-for-base to derive an effective base price
+        false, // quote -> base: the agent is buying the token
         current_timestamp,
         current_slot,
-        PRICE_PROBE_QUOTE_AMOUNT,
-        false,
+        quote_amount,
+        false, // no referral
+        false, // not the creator's first-swap bundle
     )
-    .map_err(|_| error!(ErrorCode::InvalidPrice))?;
+    .map_err(|_| error!(ErrorCode::DbcQuoteFailed))?;
 
-    if quote.amount_out == 0 {
-        return err!(ErrorCode::InvalidPrice);
-    }
+    // sqrt_price is Q64.64. Price ratio = (next_sqrt / current_sqrt)^2.
+    let next_sqrt: u128 = quote.next_sqrt_price;
+    let sqrt_ratio_bps = next_sqrt
+        .checked_mul(10_000)
+        .ok_or(ErrorCode::MathOverflow)?
+        / current_sqrt;
+    let price_ratio_bps = sqrt_ratio_bps
+        .checked_mul(sqrt_ratio_bps)
+        .ok_or(ErrorCode::MathOverflow)?
+        / 10_000;
+    let impact = price_ratio_bps.saturating_sub(10_000);
 
-    let price_scaled = (PRICE_PROBE_QUOTE_AMOUNT as u128)
-        .checked_mul(1_000_000)
-        .and_then(|v| v.checked_div(quote.amount_out as u128))
-        .ok_or(ErrorCode::MathOverflow)?;
-
-    let price = i64::try_from(price_scaled).map_err(|_| ErrorCode::MathOverflow)?;
-
-    // OPEN ITEM: replace with the verified progress accessor for the
-    // installed crate version.
-    let progress_bps = pool_progress_bps(&pool, &config)?;
-
-    Ok(DbcPrice {
-        price,
-        expo: DBC_PRICE_EXPO,
-        progress_bps,
+    Ok(DbcSnapshot {
+        progress_bps: progress as u16,
+        price_impact_bps: u64::try_from(impact).unwrap_or(u64::MAX),
     })
-}
-
-/// Placeholder — must be replaced with the verified way to read curve
-/// progress toward migration on the installed `dynamic-bonding-curve`
-/// version before this guard can be trusted in a live demo.
-fn pool_progress_bps(_pool: &VirtualPool, _config: &PoolConfig) -> Result<u16> {
-    // TODO: wire to the real field/helper (e.g. reserves vs migration
-    // threshold, or a dedicated progress accessor if one exists on this
-    // crate version). Returning 0 here fails safe: until this is verified,
-    // every pool reads as "too early" and guarded_dbc_transfer will reject
-    // rather than silently pass an unverified check.
-    Ok(0)
 }

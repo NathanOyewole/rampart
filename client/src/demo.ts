@@ -58,6 +58,9 @@ const ERR_NAMES = new Map<number, string>([
   [6019, "InsufficientBalance"],
   [6020, "NotADbcPool"],
   [6021, "PoolTooEarly"],
+  [6022, "PoolNotAllowed"],
+  [6023, "DbcQuoteFailed"],
+  [6024, "PoolPriceImpactTooHigh"],
 ]);
 
 const priceRaw = (usd: number) => Math.round(usd * 1e8);
@@ -125,6 +128,29 @@ export class RampartDemo {
       }
       const d = this.norm(e);
       this.rec("error", label, `failed: ${d.name ?? d.code ?? e}`, { errorCode: d.code, errorName: d.name });
+      throw e;
+    }
+  }
+
+  // For guards whose outcome legitimately depends on live external state (e.g. a
+  // real DBC pool): record whichever result actually happens. A program-level
+  // rejection is shown as a block with its error name; anything else (network,
+  // signing) is still a real failure and is rethrown.
+  private async attemptEither(label: string, fn: () => Promise<string>) {
+    try {
+      const sig = await fn();
+      this.rec("ok", label, `accepted, tx ${sig}`, { tx: sig });
+      return sig;
+    } catch (e) {
+      const d = this.norm(e);
+      if (d.name || d.code) {
+        this.rec("rejected", label, `blocked on-chain: ${d.name ?? d.code}`, {
+          errorCode: d.code,
+          errorName: d.name,
+        });
+        return undefined;
+      }
+      this.rec("error", label, `failed: ${e}`, {});
       throw e;
     }
   }
@@ -289,7 +315,9 @@ export class RampartDemo {
       this.vault = vault;
       this.rec("ok", "init_vault", `vault ${vault.toBase58()} · caps $${this.cfg.dailyUsd}/day $${this.cfg.perTxUsd}/tx · reference price snapshot $${this.cfg.fairPriceUsd}`, { tx: sig });
 
-      const allowlist = this.cfg.allowlist.length ? this.cfg.allowlist : [dest];
+      const baseAllowlist = this.cfg.allowlist.length ? this.cfg.allowlist : [dest];
+      // A DBC pool must be explicitly approved by the owner to be referenced.
+      const allowlist = DBC_POOL ? [...baseAllowlist, DBC_POOL] : baseAllowlist;
       const pSig = await c.proposePolicy(vault, {
         dailyUsdCapMicro: Math.round(this.cfg.dailyUsd * 1e6),
         perTxUsdCapMicro: Math.round(this.cfg.perTxUsd * 1e6),
@@ -368,13 +396,16 @@ export class RampartDemo {
       if (DBC_POOL && DBC_CONFIG) {
         this.rec(
           "info",
-          "DBC guard: curve-progress check pending",
-          "progress accessor is still a placeholder (open item) — fails safe, so the next step is expected to block as PoolTooEarly until it's wired to the real field"
+          "DBC guard: pool gates",
+          "owner-approved pool, curve progress floor, and price-impact cap are enforced on-chain before any funds move"
         );
-        await this.attempt(
-          "guard: DBC-priced transfer",
-          () => c.guardedDbcTransfer(vault, agent, dest, DBC_POOL, DBC_CONFIG, sol(0.05)),
-          { expectReject: true }
+        // Outcome depends on the live pool: it passes only if the pool is past the
+        // progress floor and the trade's curve price impact is within the policy's
+        // slippage band; otherwise the named guard error is shown.
+        await this.attemptEither(
+          "guard: DBC-gated transfer 0.05 SOL",
+          () =>
+            c.guardedDbcTransfer(vault, agent, dest, feed.publicKey, DBC_POOL, DBC_CONFIG, sol(0.05))
         );
       } else {
         this.rec(

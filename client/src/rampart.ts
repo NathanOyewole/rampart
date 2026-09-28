@@ -397,14 +397,16 @@ export class RampartClient {
       .rpc();
   }
 
-  // Same guard flow as guardedTransfer, priced off a live Meteora DBC pool
-  // instead of a Pyth feed. Requires the on-chain program to have the
+  // guardedTransfer plus Meteora DBC pool gates (owner-approved pool, curve
+  // progress floor, curve price-impact cap). USD valuation still uses the Pyth
+  // SOL/USD feed. Requires the on-chain program to have the
   // guarded_dbc_transfer instruction (branch feat/meteora-dbc-guard) and a
   // regenerated IDL that includes it.
   async guardedDbcTransfer(
     vault: PublicKey,
     agent: Keypair,
     destination: PublicKey,
+    feed: PublicKey,
     dbcPool: PublicKey,
     dbcConfig: PublicKey,
     amountLamports: number
@@ -420,6 +422,7 @@ export class RampartClient {
         policy: policyPda(vault),
         spendTracker: spendPda(vault),
         destination,
+        priceFeed: feed,
         dbcPool,
         dbcConfig,
         treasury,
