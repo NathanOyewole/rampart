@@ -24,6 +24,11 @@ custom-panic = []
 anchor-lang = "1.2.0"
 dynamic-bonding-curve = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve", features = ["cpi"] }
 dynamic-bonding-curve-sdk = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve" }
+# Pinned: a transitive dep of dynamic-bonding-curve. Versions >= 1.18.0 require
+# rustc 1.90, but CI (and rust-toolchain.toml) is pinned to 1.89.0. 1.17.2 is
+# the latest version that still supports 1.89.0 and satisfies Meteora's own
+# `ruint = "1.14.0"` requirement.
+ruint = "=1.17.2"
 
 [dev-dependencies]
 litesvm = "0.10.0"
