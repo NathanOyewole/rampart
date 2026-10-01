@@ -854,6 +854,9 @@ fn dbc_guard_still_honours_the_daily_cap() {
         guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
         "first dbc transfer",
     );
+    // A new slot also gives a new blockhash; reusing one is rejected as a
+    // duplicate before it ever reaches the program.
+    env.svm.warp_to_slot(400);
     assert_custom(
         guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
         E_DAILY_CAP,
