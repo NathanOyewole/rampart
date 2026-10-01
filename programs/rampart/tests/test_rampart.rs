@@ -854,11 +854,14 @@ fn dbc_guard_still_honours_the_daily_cap() {
         guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
         "first dbc transfer",
     );
-    // A new slot also gives a new blockhash; reusing one is rejected as a
-    // duplicate before it ever reaches the program.
+    // A different amount, so the two spends are not byte-identical messages.
+    // warp_to_slot alone does not rotate the blockhash in litesvm, so two
+    // identical transactions collide on signature and come back
+    // AlreadyProcessed rather than reaching the program.
     env.svm.warp_to_slot(400);
+    let second = DBC_TRADE + 200_000_000;
     assert_custom(
-        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        guarded_dbc(&mut env, second, dest, pool, config),
         E_DAILY_CAP,
     );
     assert_eq!(treasury_lamports(&env), before - DBC_TRADE);
