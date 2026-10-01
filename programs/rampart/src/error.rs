@@ -42,4 +42,14 @@ pub enum ErrorCode {
     MathOverflow,
     #[msg("Amount exceeds vault balance")]
     InsufficientBalance,
+    #[msg("Account is not a recognized DBC pool/config")]
+    NotADbcPool,
+    #[msg("DBC pool has not reached the minimum required curve progress")]
+    PoolTooEarly,
+    #[msg("DBC pool is not allowlisted for this vault")]
+    PoolNotAllowed,
+    #[msg("Could not quote the DBC pool (curve complete, inactive, or invalid)")]
+    DbcQuoteFailed,
+    #[msg("Trade would move the DBC curve price beyond the allowed slippage")]
+    PoolPriceImpactTooHigh,
 }

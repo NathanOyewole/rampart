@@ -25,6 +25,22 @@ export const PYTH_STATUS_OFFSET = 0x44;
 export const PYTH_MIN_DATA_LEN = 0x45;
 export const STATUS_TRADING = 1;
 
+export const DBC_PROGRAM_ID = new PublicKey(
+  "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
+);
+
+// A real DBC pool + its config, created once (e.g. via Meteora's Invent CLI or
+// launchpad scaffold) and reused across demo runs — not created fresh per run,
+// since a bonding curve needs actual trading history to be interesting.
+// Unset in environments where a pool hasn't been created yet; demo steps that
+// need it are skipped with an "info" note rather than failing the whole run.
+export const DBC_POOL = process.env.RAMPART_DBC_POOL
+  ? new PublicKey(process.env.RAMPART_DBC_POOL)
+  : undefined;
+export const DBC_CONFIG = process.env.RAMPART_DBC_CONFIG
+  ? new PublicKey(process.env.RAMPART_DBC_CONFIG)
+  : undefined;
+
 export function loadPayer(): Keypair {
   const b64 = process.env.RAMPART_WALLET_B64;
   if (b64) {

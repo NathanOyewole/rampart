@@ -1,4 +1,5 @@
 pub mod constants;
+pub mod dbc;
 pub mod error;
 pub mod instructions;
 pub mod math;
@@ -74,6 +75,10 @@ pub mod rampart {
 
     pub fn guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Result<()> {
         handle_guarded_transfer(ctx, amount)
+    }
+
+    pub fn guarded_dbc_transfer(ctx: Context<GuardedDbcTransfer>, amount: u64) -> Result<()> {
+        handle_guarded_dbc_transfer(ctx, amount)
     }
 }
 

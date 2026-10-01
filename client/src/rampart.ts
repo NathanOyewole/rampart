@@ -397,6 +397,41 @@ export class RampartClient {
       .rpc();
   }
 
+  // guardedTransfer plus Meteora DBC pool gates (owner-approved pool, curve
+  // progress floor, curve price-impact cap). USD valuation still uses the Pyth
+  // SOL/USD feed. Requires the on-chain program to have the
+  // guarded_dbc_transfer instruction (branch feat/meteora-dbc-guard) and a
+  // regenerated IDL that includes it.
+  async guardedDbcTransfer(
+    vault: PublicKey,
+    agent: Keypair,
+    destination: PublicKey,
+    feed: PublicKey,
+    dbcPool: PublicKey,
+    dbcConfig: PublicKey,
+    amountLamports: number
+  ) {
+    const v = await this.fetchVault(vault);
+    const treasury = treasuryPubkey(vault, v.treasuryBump);
+    return this.program.methods
+      .guardedDbcTransfer(new BN(amountLamports))
+      .accounts({
+        agent: agent.publicKey,
+        agentAccount: agentPda(vault, agent.publicKey),
+        vault,
+        policy: policyPda(vault),
+        spendTracker: spendPda(vault),
+        destination,
+        priceFeed: feed,
+        dbcPool,
+        dbcConfig,
+        treasury,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([agent])
+      .rpc();
+  }
+
   async withdrawAs(vault: PublicKey, signerKp: Keypair, amountLamports: number) {
     const v = await this.fetchVault(vault);
     const treasury = treasuryPubkey(vault, v.treasuryBump);
