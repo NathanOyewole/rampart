@@ -22,8 +22,14 @@ custom-panic = []
 
 [dependencies]
 anchor-lang = "1.2.0"
-dynamic-bonding-curve = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve", features = ["cpi"] }
-dynamic-bonding-curve-sdk = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve" }
+# Pinned to an exact rev. Without `rev`/`tag`, every build resolves whatever
+# Meteora's default branch points at, so an upstream push can change the
+# program we compile -- or break the build -- with no change in this repo. The
+# DBC zero-copy account layouts (VirtualPool, PoolConfig) are deserialized
+# straight out of account data, so that revision is a security boundary, not
+# just a build detail. Bump it deliberately, with a test run.
+dynamic-bonding-curve = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve", rev = "f552f20aa3c1c7631427c3827aeea7c58b902813", features = ["cpi"] }
+dynamic-bonding-curve-sdk = { git = "https://github.com/MeteoraAg/dynamic-bonding-curve", rev = "f552f20aa3c1c7631427c3827aeea7c58b902813" }
 # Pinned: a transitive dep of dynamic-bonding-curve. Versions >= 1.18.0 require
 # rustc 1.90, but CI (and rust-toolchain.toml) is pinned to 1.89.0. 1.17.2 is
 # the latest version that still supports 1.89.0 and satisfies Meteora's own

@@ -1,9 +1,12 @@
+mod common;
+
 use {
     anchor_lang::{
         prelude::Pubkey,
         solana_program::{instruction::Instruction, system_program},
         AccountDeserialize, InstructionData, ToAccountMetas,
     },
+    common::{dbc_fixture, DbcFixture, DEEP_LIQUIDITY, MIGRATION_QUOTE_THRESHOLD, SHALLOW_LIQUIDITY},
     litesvm::{types::TransactionResult, LiteSVM},
     rampart::constants::*,
     solana_account::Account,
@@ -25,6 +28,11 @@ const E_DAILY_CAP: u32 = 6008;
 const E_NOT_TRADING: u32 = 6011;
 const E_DEV_TOO_HIGH: u32 = 6013;
 const E_POLICY_NOT_EFFECTIVE: u32 = 6016;
+const E_NOT_DBC_POOL: u32 = 6020;
+const E_POOL_TOO_EARLY: u32 = 6021;
+const E_POOL_NOT_ALLOWED: u32 = 6022;
+const E_DBC_QUOTE_FAILED: u32 = 6023;
+const E_POOL_IMPACT_TOO_HIGH: u32 = 6024;
 
 const SOL_PRICE: i64 = 20_000_000_000;
 const SOL_EXPO: i32 = -8;
@@ -605,4 +613,250 @@ fn treasury_self_destination_blocked() {
         guarded_transfer(&mut env, 1_000_000_000, treasury, feed),
         E_TREASURY_DEST,
     );
+}
+
+// --- Meteora DBC guard ---------------------------------------------------
+// The DBC pool/config accounts are injected directly as raw account data
+// (built by `common::dbc_fixture`), so these tests exercise the whole
+// guarded_dbc_transfer path with a genuinely valid Meteora curve.
+
+/// One SOL, a trade size the vault can comfortably afford.
+const DBC_TRADE: u64 = 1_000_000_000;
+
+fn install_dbc(env: &mut TestEnv, fixture: &DbcFixture) {
+    install_dbc_as(env, fixture, dynamic_bonding_curve::ID);
+}
+
+fn install_dbc_as(env: &mut TestEnv, fixture: &DbcFixture, owner: Pubkey) {
+    for (key, data) in [
+        (fixture.pool_key, fixture.pool_data()),
+        (fixture.config_key, fixture.config_data()),
+    ] {
+        env.svm
+            .set_account(
+                key,
+                Account {
+                    lamports: 1_000_000_000,
+                    data,
+                    owner,
+                    executable: false,
+                    rent_epoch: 0,
+                },
+            )
+            .unwrap();
+    }
+}
+
+fn guarded_dbc(env: &mut TestEnv, amount: u64, dest: Pubkey, pool: Pubkey, config: Pubkey) -> TransactionResult {
+    let agent_pda = pda(&rampart::id(), &[AGENT_SEED, env.vault.as_ref(), env.agent.pubkey().as_ref()]);
+    let ix = Instruction::new_with_bytes(
+        rampart::id(),
+        &rampart::instruction::GuardedDbcTransfer { amount }.data(),
+        rampart::accounts::GuardedDbcTransfer {
+            agent: env.agent.pubkey(),
+            agent_account: agent_pda,
+            vault: env.vault,
+            policy: env.policy,
+            spend_tracker: env.spend_tracker,
+            destination: dest,
+            price_feed: env.feed,
+            dbc_pool: pool,
+            dbc_config: config,
+            treasury: env.treasury,
+            system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+    );
+    send(&mut env.svm, &env.agent, &[&env.agent], &ix)
+}
+
+/// Allowlist both the destination and the pool, then let the timelock expire.
+fn allow_pool(env: &mut TestEnv, fixture: &DbcFixture, dest: Pubkey, slippage: u16) {
+    propose_allowlist(
+        env,
+        vec![dest, fixture.pool_key],
+        DAILY_CAP_MICRO,
+        PER_TX_CAP_MICRO,
+        slippage,
+        EPOCH_SLOTS,
+    );
+    env.svm.warp_to_slot(200);
+    apply_policy_ok(env);
+}
+
+#[test]
+fn dbc_happy_path_on_allowlisted_pool() {
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    // 40% curve progress, deep liquidity: a 1 SOL trade cannot move the price.
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, DEEP_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    expect_ok(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        "guarded_dbc_transfer",
+    );
+    assert_eq!(treasury_lamports(&env), before - DBC_TRADE);
+    assert_eq!(env.svm.get_account(&dest).unwrap().lamports, DBC_TRADE);
+
+    let mut data: &[u8] = &env.svm.get_account(&env.spend_tracker).unwrap().data;
+    let tracker = rampart::state::SpendTracker::try_deserialize(&mut data).unwrap();
+    // 1 SOL at the $200 reference = 200_000_000 usd_micro.
+    assert_eq!(tracker.spent_usd_micro, 200_000_000);
+}
+
+#[test]
+fn dbc_pool_must_be_allowlisted_by_the_owner() {
+    // The agent picks which pool to name. Without the owner allowlisting it,
+    // a jailbroken agent can point at whatever curve it likes.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, DEEP_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+
+    propose_allowlist(&mut env, vec![dest], DAILY_CAP_MICRO, PER_TX_CAP_MICRO, 100, EPOCH_SLOTS);
+    env.svm.warp_to_slot(200);
+    apply_policy_ok(&mut env);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_POOL_NOT_ALLOWED,
+    );
+    assert_eq!(treasury_lamports(&env), before, "no lamports may move");
+}
+
+#[test]
+fn dbc_accounts_must_be_owned_by_the_dbc_program() {
+    // A self-made account that happens to deserialize into a healthy-looking
+    // pool is worthless unless the runtime says the DBC program owns it.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, DEEP_LIQUIDITY);
+    install_dbc_as(&mut env, &fixture, system_program::ID);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_NOT_DBC_POOL,
+    );
+    assert_eq!(treasury_lamports(&env), before);
+}
+
+#[test]
+fn dbc_pool_must_belong_to_the_config_it_is_paired_with() {
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, DEEP_LIQUIDITY)
+        .with_config_mismatch();
+    install_dbc(&mut env, &fixture);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_NOT_DBC_POOL,
+    );
+    assert_eq!(treasury_lamports(&env), before);
+}
+
+#[test]
+fn dbc_pool_below_min_progress_is_rejected() {
+    // 10% curve progress, under the 2_000 bps (20%) floor: a pool with almost
+    // no trading history is not a pool you size a position against.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD / 10, DEEP_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_POOL_TOO_EARLY,
+    );
+    assert_eq!(treasury_lamports(&env), before);
+}
+
+#[test]
+fn dbc_completed_curve_is_rejected() {
+    // At the migration threshold the curve is complete: it has graduated, so
+    // there is no curve price left to read and the trade must not be sized
+    // against one.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD, DEEP_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_DBC_QUOTE_FAILED,
+    );
+    assert_eq!(treasury_lamports(&env), before);
+}
+
+#[test]
+fn dbc_price_impact_beyond_slippage_is_rejected() {
+    // Shallow curve: 1 SOL moves the pool price ~1_008 bps, far past the
+    // owner's 100 bps cap. The vault funds the trade, so the agent must not be
+    // able to choose a pool where its own size wrecks the entry price.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, SHALLOW_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_POOL_IMPACT_TOO_HIGH,
+    );
+    assert_eq!(treasury_lamports(&env), before, "no lamports may move");
+}
+
+#[test]
+fn dbc_guard_still_honours_the_daily_cap() {
+    // The DBC path is an addition to the vault's policy, not a replacement:
+    // the per-tx and daily USD caps still apply on top of the pool checks.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, DEEP_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+
+    // 1 SOL at the $200 reference is 200_000_000 usd_micro. A 300_000_000
+    // daily cap therefore admits exactly one of these trades.
+    propose_allowlist(
+        &mut env,
+        vec![dest, fixture.pool_key],
+        300_000_000,
+        10_000_000_000,
+        100,
+        EPOCH_SLOTS,
+    );
+    env.svm.warp_to_slot(200);
+    apply_policy_ok(&mut env);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    expect_ok(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        "first dbc transfer",
+    );
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_DAILY_CAP,
+    );
+    assert_eq!(treasury_lamports(&env), before - DBC_TRADE);
 }

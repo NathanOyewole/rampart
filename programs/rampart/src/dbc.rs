@@ -1,9 +1,27 @@
 use anchor_lang::prelude::*;
+use anchor_lang::AccountDeserialize;
 
 use dynamic_bonding_curve::state::{PoolConfig, VirtualPool};
 use dynamic_bonding_curve_sdk::quote_exact_in::quote_exact_in;
 
 use crate::error::ErrorCode;
+
+/// Anchor stores a zero-copy account as an 8-byte discriminator followed by the
+/// `Pod` representation, and its generated `try_deserialize` hands the tail to
+/// `bytemuck::pod_read_unaligned` — which *panics* unless the length matches
+/// `size_of::<T>()` exactly. Both accounts arrive here as `UncheckedAccount`s,
+/// so ownership alone does not imply a well-formed buffer: deserialize a
+/// wrong-sized buffer and the program aborts instead of returning an error.
+/// Check the length first and every malformed account collapses to
+/// `NotADbcPool`.
+fn deserialize_zero_copy<T: AccountDeserialize>(data: &[u8]) -> Result<T> {
+    const DISCRIMINATOR_LEN: usize = 8;
+    if data.len() != DISCRIMINATOR_LEN + std::mem::size_of::<T>() {
+        return err!(ErrorCode::NotADbcPool);
+    }
+    let mut slice: &[u8] = data;
+    T::try_deserialize(&mut slice).map_err(|_| error!(ErrorCode::NotADbcPool))
+}
 
 /// Health readings taken from a live Meteora DBC pool. Both values are ratios,
 /// so they are unit-free: no oracle is needed for a token that has no price
@@ -34,13 +52,8 @@ pub fn inspect_dbc_pool(
     current_timestamp: u64,
     current_slot: u64,
 ) -> Result<DbcSnapshot> {
-    let mut pool_slice: &[u8] = pool_data;
-    let pool = VirtualPool::try_deserialize(&mut pool_slice)
-        .map_err(|_| error!(ErrorCode::NotADbcPool))?;
-
-    let mut config_slice: &[u8] = config_data;
-    let config = PoolConfig::try_deserialize(&mut config_slice)
-        .map_err(|_| error!(ErrorCode::NotADbcPool))?;
+    let pool = deserialize_zero_copy::<VirtualPool>(pool_data)?;
+    let config = deserialize_zero_copy::<PoolConfig>(config_data)?;
 
     // Copy fields out by value (zero-copy structs; avoid holding references).
     let pool_config_key: Pubkey = pool.config;
