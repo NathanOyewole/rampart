@@ -60,6 +60,8 @@ execution time and either honors or rejects the intent. The agent key is a
   effective after the timelock elapses.
 - **`guarded_transfer`** — the money-moving instruction. **Agent-only.** Rejects
   unless every guard below passes.
+- **`guarded_dbc_transfer`** — the same, but additionally priced against a
+  **live Meteora DBC bonding curve** read from chain. See below.
 
 ### The guard stack (all evaluated inside `guarded_transfer`)
 
@@ -81,6 +83,46 @@ Both USD caps are computed from the *live feed*, so a large amount can't be
 laundered through a price-print discrepancy — the amount gate and the price sanity
 gate are both on-chain.
 
+### The DBC guard stack (`guarded_dbc_transfer`)
+
+Generic spend control is a solved problem — Cap, Safe, Turnkey and Coinbase all
+encode allowlists and caps. What none of them do is price a position against the
+curve it is about to move. `guarded_dbc_transfer` adds four checks on top of the
+stack above, and they run **before** any funds move:
+
+1. **Both accounts are real** — the pool and config must deserialize as genuine
+   `VirtualPool` / `PoolConfig` layout, be owned by the DBC program, and the pool
+   must actually belong to the config it was paired with. A self-made account that
+   looks healthy is worthless; mis-sized accounts return an error instead of
+   panicking.
+2. **Owner-approved pool** — the agent names the pool, so the owner must have
+   allowlisted that exact pool. Otherwise a jailbroken agent points at any curve
+   it likes.
+3. **Tradeable progress band — 20% to 80% of the curve.** Both ends are refusals:
+   - *Floor* (`PoolTooEarly`): a pool with no trading history is not a pool you
+     size a position against.
+   - *Ceiling* (`PoolTooLate`): near `migration_quote_threshold` a few SOL of
+     buying pressure **graduates the token outright**. That is the trade a volume
+     bot is paid to make, and it is exactly what an agent gets talked into by
+     "finish this one, it is nearly there". Meteora's own defence is a
+     fee-schedule `RateLimiter` — fees do not stop a graduation, and the launchpad
+     that owns the config can configure it away. Putting the gate in the *trader's*
+     vault means the pool creator cannot relax it.
+   - A completed curve (100%) fails separately as `DbcQuoteFailed`, because there
+     is no curve left to price.
+4. **Price-impact cap** — the requested size is priced through **Meteora's own
+   quote math**, and the resulting curve-price movement must sit inside the owner's
+   `max_slippage_bps`. The vault funds the trade, so the agent must not be able to
+   pick a pool where its own size wrecks the entry price. Measured on real Meteora
+   fixtures: 0.1 SOL = 98 bps (passes a 100 bps cap), 1 SOL = 1008 bps (rejected),
+   5 SOL = 5535 bps (rejected).
+
+**Scope, stated plainly:** this gates and releases capital; it does not execute
+the swap. Meteora DBC swaps require the `pool_authority` PDA to sign, and we are
+not willing to hand a second signer authority over the treasury to get there. The
+vault's job is to decide *whether the money may move*, on-chain, where the agent
+cannot argue with it.
+
 ## Safety properties (the demo)
 
 | Threat | On-chain outcome |
@@ -94,7 +136,7 @@ gate are both on-chain.
 | Compromised agent key tries to unfreeze / withdraw | `Unauthorized` — only the owner signs those |
 | Owner wants to loosen the policy mid-heist | 60-slot timelock forces a warning window |
 
-## Proof: 13 litesvm integration tests
+## Proof: 37 tests (22 end-to-end, 12 host-side, 3 unit)
 
 `programs/rampart/tests/test_rampart.rs` drives a full in-memory Solana VM
 (`litesvm`) against the SBF build:
@@ -112,6 +154,35 @@ gate are both on-chain.
 - `halted_feed_is_blocked`
 - `policy_change_requires_timelock`
 - `treasury_self_destination_blocked`
+- `dbc_happy_path_on_allowlisted_pool`
+- `dbc_pool_must_be_allowlisted_by_the_owner`
+- `dbc_accounts_must_be_owned_by_the_dbc_program`
+- `dbc_pool_must_belong_to_the_config_it_is_paired_with`
+- `dbc_pool_below_min_progress_is_rejected`
+- `dbc_pool_past_max_progress_is_rejected`
+- `dbc_completed_curve_is_rejected`
+- `dbc_price_impact_beyond_slippage_is_rejected`
+- `dbc_guard_still_honours_the_daily_cap`
+
+`programs/rampart/tests/test_dbc_snapshot.rs` runs 12 host-side tests against real
+Meteora pool/config fixtures (built from Meteora's own account types and curve
+math) and needs no built `.so`:
+
+- `healthy_pool_reads_progress_and_impact`
+- `progress_tracks_quote_reserve`
+- `tradeable_band_excludes_both_ends_of_the_curve`
+- `shallow_curve_reports_real_price_impact`
+- `impact_grows_with_trade_size`
+- `completed_curve_cannot_be_quoted`
+- `pool_must_belong_to_the_supplied_config`
+- `wrong_discriminator_is_not_a_pool`
+- `zeroed_pool_is_not_our_pool`
+- `mis_sized_accounts_are_rejected_not_fatal`
+- `fixture_bytes_round_trip_through_anchor`
+- `fixture_sizes_match_anchor_init_space`
+
+Meteora's `dynamic-bonding-curve` is pinned to an exact revision in
+`Cargo.lock`, so the fixtures cannot drift under a `cargo update`.
 
 ## Live on devnet (watch the drain get blocked)
 
