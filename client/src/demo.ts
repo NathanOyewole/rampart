@@ -63,6 +63,7 @@ const ERR_NAMES = new Map<number, string>([
   [6022, "PoolNotAllowed"],
   [6023, "DbcQuoteFailed"],
   [6024, "PoolPriceImpactTooHigh"],
+  [6025, "PoolTooLate"],
 ]);
 
 const priceRaw = (usd: number) => Math.round(usd * 1e8);
@@ -504,11 +505,12 @@ export class RampartDemo {
         this.rec(
           "info",
           "DBC guard: pool gates",
-          "owner-approved pool, curve progress floor, and price-impact cap are enforced on-chain before any funds move"
+          "owner-approved pool, a tradeable curve-progress band, and a price-impact cap are enforced on-chain before any funds move"
         );
-        // Outcome depends on the live pool: it passes only if the pool is past the
-        // progress floor and the trade's curve price impact is within the policy's
-        // slippage band; otherwise the named guard error is shown.
+        // Outcome depends on the live pool: it passes only if the pool sits inside
+        // the progress band (past the floor, clear of the graduation cliff) and the
+        // trade's curve price impact is within the policy's slippage band; otherwise
+        // the named guard error is shown.
         await this.attemptEither(
           "guard: DBC-gated transfer 0.05 SOL",
           () =>

@@ -977,6 +977,11 @@
    "code": 6024,
    "name": "PoolPriceImpactTooHigh",
    "msg": "Trade would move the DBC curve price beyond the allowed slippage"
+  },
+  {
+   "code": 6025,
+   "name": "PoolTooLate",
+   "msg": "DBC pool is past the maximum curve progress - too close to graduation to size against"
   }
  ]
 }

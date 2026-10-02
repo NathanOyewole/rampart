@@ -132,5 +132,13 @@ mod tests {
             "VaultFrozen code={}",
             code(ErrorCode::VaultFrozen.into())
         );
+        eprintln!(
+            "PoolTooLate code={}",
+            code(ErrorCode::PoolTooLate.into())
+        );
+        eprintln!(
+            "PoolTooEarly code={}",
+            code(ErrorCode::PoolTooEarly.into())
+        );
     }
 }

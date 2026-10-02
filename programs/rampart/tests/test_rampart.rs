@@ -33,6 +33,7 @@ const E_POOL_TOO_EARLY: u32 = 6021;
 const E_POOL_NOT_ALLOWED: u32 = 6022;
 const E_DBC_QUOTE_FAILED: u32 = 6023;
 const E_POOL_IMPACT_TOO_HIGH: u32 = 6024;
+const E_POOL_TOO_LATE: u32 = 6025;
 
 const SOL_PRICE: i64 = 20_000_000_000;
 const SOL_EXPO: i32 = -8;
@@ -804,6 +805,33 @@ fn dbc_completed_curve_is_rejected() {
         E_DBC_QUOTE_FAILED,
     );
     assert_eq!(treasury_lamports(&env), before);
+}
+
+#[test]
+fn dbc_pool_past_max_progress_is_rejected() {
+    // 85% curve progress, over the 8_000 bps (80%) ceiling. This is the
+    // graduation cliff: the quote reserve is close to the migration threshold,
+    // so a few SOL of buying pressure graduates the token outright. That is the
+    // trade a volume bot is paid to make, and it is exactly the instruction an
+    // agent gets talked into by "finish it, it is nearly there".
+    //
+    // Meteora's own defence here is a fee-schedule `RateLimiter`, which a
+    // launchpad can reconfigure and which never actually stops the pool from
+    // being run to threshold. This gate is in the trader's vault instead, so
+    // the pool creator cannot relax it.
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    let fixture = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 85 / 100, DEEP_LIQUIDITY);
+    install_dbc(&mut env, &fixture);
+    allow_pool(&mut env, &fixture, dest, 100);
+
+    let before = treasury_lamports(&env);
+    let (pool, config) = (fixture.pool_key, fixture.config_key);
+    assert_custom(
+        guarded_dbc(&mut env, DBC_TRADE, dest, pool, config),
+        E_POOL_TOO_LATE,
+    );
+    assert_eq!(treasury_lamports(&env), before, "no lamports may move");
 }
 
 #[test]

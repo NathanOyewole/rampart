@@ -52,4 +52,6 @@ pub enum ErrorCode {
     DbcQuoteFailed,
     #[msg("Trade would move the DBC curve price beyond the allowed slippage")]
     PoolPriceImpactTooHigh,
+    #[msg("DBC pool is past the maximum curve progress - too close to graduation to size against")]
+    PoolTooLate,
 }

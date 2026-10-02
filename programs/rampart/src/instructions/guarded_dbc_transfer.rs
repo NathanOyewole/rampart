@@ -109,6 +109,12 @@ pub fn handle_guarded_dbc_transfer(ctx: Context<GuardedDbcTransfer>, amount: u64
     if snapshot.progress_bps < MIN_DBC_PROGRESS_BPS {
         return err!(ErrorCode::PoolTooEarly);
     }
+    // Graduation cliff. Near the migration threshold a small amount of buying
+    // pressure pushes the pool over the edge, which is the trade a volume bot
+    // is paid to make. See MAX_DBC_PROGRESS_BPS.
+    if snapshot.progress_bps > MAX_DBC_PROGRESS_BPS {
+        return err!(ErrorCode::PoolTooLate);
+    }
     if snapshot.price_impact_bps > policy.max_slippage_bps as u64 {
         return err!(ErrorCode::PoolPriceImpactTooHigh);
     }

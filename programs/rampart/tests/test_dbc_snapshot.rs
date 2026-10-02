@@ -71,6 +71,40 @@ fn progress_tracks_quote_reserve() {
 }
 
 #[test]
+fn tradeable_band_excludes_both_ends_of_the_curve() {
+    // MAX_DBC_PROGRESS_BPS (8_000) only works if a pool inside the graduation
+    // band still *quotes*. A completed curve fails inside `inspect_dbc_pool`
+    // with DbcQuoteFailed, so if 85% also failed to quote, the handler would
+    // report the wrong error and the ceiling would be dead code.
+    //
+    // `guarded_dbc_transfer` relies on exactly this: past the ceiling it must
+    // see Ok(snapshot) with a high progress_bps, not an Err. Pinned here
+    // because the matching integration test only runs in CI.
+    let just_past_ceiling = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 85 / 100, DEEP_LIQUIDITY);
+    let snapshot = inspect(&just_past_ceiling, TRADE).expect("85% must still quote");
+    assert_eq!(snapshot.progress_bps, 8_500);
+    assert!(
+        snapshot.progress_bps > rampart::constants::MAX_DBC_PROGRESS_BPS,
+        "the 85% fixture must sit above the ceiling, got {}",
+        snapshot.progress_bps
+    );
+
+    // And the band edge itself is still inside the window.
+    let at_ceiling = dbc_fixture(MIGRATION_QUOTE_THRESHOLD * 2 / 5, DEEP_LIQUIDITY);
+    let inside = inspect(&at_ceiling, TRADE).expect("40% must quote");
+    assert!(
+        inside.progress_bps > rampart::constants::MIN_DBC_PROGRESS_BPS
+            && inside.progress_bps < rampart::constants::MAX_DBC_PROGRESS_BPS,
+        "40% must sit inside the tradeable band, got {}",
+        inside.progress_bps
+    );
+
+    // Sanity: the constants themselves.
+    assert!(rampart::constants::MIN_DBC_PROGRESS_BPS < rampart::constants::MAX_DBC_PROGRESS_BPS);
+    assert_eq!(rampart::constants::MAX_DBC_PROGRESS_BPS, 8_000);
+}
+
+#[test]
 fn shallow_curve_reports_real_price_impact() {
     // The gate is only meaningful if impact is actually reachable, and it is
     // not on a deep curve. This pins that a shallow curve does move.
