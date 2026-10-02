@@ -69,6 +69,38 @@ const mockIdl = JSON.parse(
   readFileSync(new URL("../idl/oracle-mock.json", import.meta.url), "utf8")
 ) as Idl;
 
+export class TimeoutError extends Error {}
+
+export const CONFIRM_TIMEOUT_MS = Number(
+  process.env.RAMPART_CONFIRM_TIMEOUT_MS ?? 90_000
+);
+
+/**
+ * web3.js `confirmTransaction` polls the signature forever. On a congested
+ * devnet (or a dropped tx) it never settles, so the caller hangs and any
+ * `status = "running"` flag it set is never cleared -- the demo wedges with
+ * no way back short of a process restart. Bound every wait.
+ */
+export async function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  message: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new TimeoutError(message)), ms);
+        // do not hold the event loop open just for the timeout
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function makeProvider(payer: Keypair, rpc: string = RPC_URL) {
   const connection = new Connection(rpc, "confirmed");
   const provider = new AnchorProvider(
@@ -92,8 +124,19 @@ export function makeProvider(payer: Keypair, rpc: string = RPC_URL) {
         tx.partialSign(payer, ...(signers ?? []));
       }
       try {
-        return await original(tx, signers, options);
+        return await withTimeout(
+          original(tx, signers, options),
+          CONFIRM_TIMEOUT_MS,
+          `confirmation timed out after ${CONFIRM_TIMEOUT_MS / 1000}s (attempt ${attempt + 1}/5)`
+        );
       } catch (e) {
+        // A timeout is retryable for the same reason "was not confirmed" is:
+        // the tx may well land, we just stopped waiting for it. Everything
+        // else is a real failure and must surface.
+        if (e instanceof TimeoutError) {
+          lastErr = e;
+          continue;
+        }
         if (!(e instanceof Error) || !e.message.includes("was not confirmed")) {
           throw e;
         }

@@ -1,4 +1,4 @@
-import { Keypair, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { RampartClient, describeError, spendPda, treasuryPubkey } from "./rampart.js";
 import { microToUsd, usdFromPyth, DBC_POOL, DBC_CONFIG } from "./env.js";
@@ -24,6 +24,8 @@ export interface DemoConfig {
   fairPriceUsd: number;
   pumpPriceUsd: number;
   allowlist: PublicKey[];
+  /** Overrides the auto-sized runner funding. Leave unset to size from balance. */
+  fundSol?: number;
 }
 
 const DEFAULT_CFG: DemoConfig = {
@@ -69,6 +71,15 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const FUND_SOL = 3;
 const FUND_FEE_RESERVE_SOL = 0.005;
+// Headroom above depositSol so the runner can pay transaction fees too.
+const FUND_SOL_BUFFER = 0.25;
+
+// Must exceed CONFIRM_TIMEOUT_MS (90s) so a live-but-slow step is never
+// reaped out from under itself. 5 confirmation attempts x 90s is the real
+// ceiling on a single step, so allow a little more than one attempt.
+const STALL_MS = Number(process.env.RAMPART_STALL_MS ?? 180_000);
+
+const BALANCE_TTL_MS = Number(process.env.RAMPART_BALANCE_TTL_MS ?? 5_000);
 
 export class RampartDemo {
   client: RampartClient;
@@ -88,6 +99,7 @@ export class RampartDemo {
   }
 
   private seq = 0;
+  private startedAt?: number;
   private rec(
     status: StepStatus,
     label: string,
@@ -96,6 +108,50 @@ export class RampartDemo {
   ) {
     this.steps.push({ seq: this.seq++, label, status, detail, ts: Date.now(), ...extra });
     return this;
+  }
+
+  private balanceCache?: { key: string; at: number; sol: number };
+
+  private async cachedBalance(
+    conn: Connection,
+    owner: PublicKey
+  ): Promise<number> {
+    const key = owner.toBase58();
+    const now = Date.now();
+    const hit = this.balanceCache;
+    if (hit && hit.key === key && now - hit.at < BALANCE_TTL_MS) return hit.sol;
+    const sol = (await conn.getBalance(owner)) / LAMPORTS_PER_SOL;
+    this.balanceCache = { key, at: now, sol };
+    return sol;
+  }
+
+  /** Clears demo state so RUN can be pressed again. */
+  reset(): void {
+    this.status = "idle";
+    this.error = undefined;
+    this.steps = [];
+    this.seq = 0;
+    this.vault = undefined;
+  }
+
+  /**
+   * A run is stalled if it is marked running but has recorded nothing for
+   * STALL_MS. Every step awaits a devnet confirmation and those are now
+   * individually timeboxed, so a silent run this old is wedged, not slow.
+   * Without this the UI polls "running" forever and RUN keeps 409ing.
+   */
+  reapStalledRun(now = Date.now()): boolean {
+    if (this.status !== "running") return false;
+    const last = this.steps.length
+      ? this.steps[this.steps.length - 1].ts
+      : this.startedAt ?? now;
+    if (now - last < STALL_MS) return false;
+    this.status = "failed";
+    this.error = `run stalled: no progress for ${Math.round(
+      (now - last) / 1000
+    )}s (RPC unresponsive?) -- press reset and try again`;
+    this.rec("info", "run reaped", this.error);
+    return true;
   }
 
   private norm(e: unknown): { code?: number; name?: string } {
@@ -222,7 +278,11 @@ export class RampartDemo {
       }
     }
 
-    const walletBalance = (await c.connection.getBalance(owner)) / LAMPORTS_PER_SOL;
+    // The UI polls this every couple of seconds and a public devnet RPC
+    // round-trip is ~1s and heavily rate-limited, so an uncached balance here
+    // makes the whole dashboard feel broken. A few seconds of staleness on a
+    // SOL balance is invisible and costs nothing.
+    const walletBalance = await this.cachedBalance(c.connection, owner);
 
     return {
       status: this.status,
@@ -249,19 +309,62 @@ export class RampartDemo {
     this.error = undefined;
     this.steps = [];
     this.seq = 0;
+    this.startedAt = Date.now();
 
     const sponsor = this.client;
     const sponsorKey = sponsor.payer.publicKey;
 
+    // Size the funding from what the sponsor can actually afford. A hardcoded
+    // FUND_SOL silently broke the demo on any wallet holding less than it --
+    // the transfer can never succeed, and (before the confirm timeout existed)
+    // that surfaced as an indefinite hang rather than an error.
+    //
+    // Public devnet RPCs are load-balanced across nodes that can lag or
+    // rate-limit, and a single bad getBalance has been observed reporting
+    // 0.005 SOL for a wallet holding 2.8. Trusting one read makes the demo
+    // refuse to start for no reason, so retry and take the max.
+    const needed = sol(this.cfg.depositSol + FUND_FEE_RESERVE_SOL + FUND_SOL_BUFFER);
+    let affordable = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      affordable = await sponsor.connection.getBalance(sponsorKey);
+      if (affordable >= needed) break;
+      if (attempt < 2) {
+        this.rec(
+          "info",
+          "re-reading sponsor balance",
+          `RPC reported ${(affordable / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
+            `need ~${(needed / LAMPORTS_PER_SOL).toFixed(3)} -- retrying`
+        );
+        await wait(1200);
+      }
+    }
+    const target = needed;
+    const fundLamports =
+      this.cfg.fundSol != null
+        ? sol(this.cfg.fundSol)
+        : Math.max(0, Math.min(target, affordable - sol(FUND_FEE_RESERVE_SOL)));
+
+    if (fundLamports < sol(this.cfg.depositSol)) {
+      this.status = "failed";
+      this.error =
+        `sponsor wallet holds ${(affordable / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
+        `needs about ${(this.cfg.depositSol + FUND_FEE_RESERVE_SOL).toFixed(3)} ` +
+        `to fund a runner and deposit ${this.cfg.depositSol} SOL -- top it up ` +
+        `(devnet: solana airdrop 5) or lower depositSol`;
+      this.rec("error", "cannot start: sponsor underfunded", this.error);
+      throw new Error(this.error);
+    }
+
+    const fundSol = fundLamports / LAMPORTS_PER_SOL;
     const runner = Keypair.generate();
     const fundTx = new Transaction().add(
       SystemProgram.transfer({
         fromPubkey: sponsorKey,
         toPubkey: runner.publicKey,
-        lamports: sol(FUND_SOL),
+        lamports: fundLamports,
       })
     );
-    this.rec("info", "sponsor funds runner wallet", `${FUND_SOL} SOL → ${runner.publicKey.toBase58().slice(0, 8)}… (fresh owner + fee payer, so RUN is repeatable)`);
+    this.rec("info", "sponsor funds runner wallet", `${fundSol.toFixed(3)} SOL → ${runner.publicKey.toBase58().slice(0, 8)}… (fresh owner + fee payer, so RUN is repeatable)`);
     await sponsor.provider.sendAndConfirm(fundTx);
 
     this.client = new RampartClient(runner, sponsor.connection.rpcEndpoint);
@@ -394,6 +497,10 @@ export class RampartDemo {
       );
 
       if (DBC_POOL && DBC_CONFIG) {
+        // Bind to locals: TS will not carry the narrowing of imported consts
+        // into a callback, so passing DBC_POOL directly fails typecheck.
+        const pool = DBC_POOL;
+        const config = DBC_CONFIG;
         this.rec(
           "info",
           "DBC guard: pool gates",
@@ -405,7 +512,7 @@ export class RampartDemo {
         await this.attemptEither(
           "guard: DBC-gated transfer 0.05 SOL",
           () =>
-            c.guardedDbcTransfer(vault, agent, dest, feed.publicKey, DBC_POOL, DBC_CONFIG, sol(0.05))
+            c.guardedDbcTransfer(vault, agent, dest, feed.publicKey, pool, config, sol(0.05))
         );
       } else {
         this.rec(

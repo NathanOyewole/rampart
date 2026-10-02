@@ -41,6 +41,7 @@ app.get("/api/state", async (_req, res) => {
 });
 
 app.post("/api/demo/run", async (_req, res) => {
+  demo.reapStalledRun();
   if (demo.status === "running") {
     res.status(409).json({ error: "demo already running" });
     return;
@@ -53,7 +54,17 @@ app.post("/api/demo/run", async (_req, res) => {
   res.status(202).json({ ok: true, status: "running" });
 });
 
+// Recovers a wedged run without a server restart. A run that has produced no
+// step for STALL_MS cannot still be making progress: every step awaits a devnet
+// confirmation, and those are individually timeboxed now.
+app.post("/api/demo/reset", (_req, res) => {
+  const was = demo.status;
+  demo.reset();
+  res.json({ ok: true, was, status: demo.status });
+});
+
 app.get("/api/demo/status", (_req, res) => {
+  demo.reapStalledRun();
   res.json({
     status: demo.status,
     error: demo.error,

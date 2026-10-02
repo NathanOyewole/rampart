@@ -150,6 +150,35 @@ main {
   margin-bottom: 12px;
 }
 
+.demo-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+button.reset {
+  appearance: none;
+  border: 1px solid var(--line, #2a3242);
+  background: transparent;
+  color: var(--muted, #8b97a8);
+  font-family: var(--mono);
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button.reset:hover:not(:disabled) {
+  color: var(--text, #e6edf3);
+  border-color: var(--muted, #8b97a8);
+}
+
+button.reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 button.run {
   appearance: none;
   border: 1px solid var(--accent);
