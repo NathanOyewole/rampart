@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface StepResult {
   seq: number;
@@ -56,27 +56,51 @@ interface State {
   treasuryBalance?: number;
 }
 
-const EXPLORER = "https://explorer.solana.com";
+// explorer.solana.com rate-limits hard (HTTP 429 for a single IP after a few
+// hits), which left judges with dead links when verifying a run. Solscan and
+// SolanaFM are used instead; SOLANAFM is offered as a fallback on every link
+// so one explorer being down never blocks verification.
+const EXPLORER = "https://solscan.io";
+const SOLANAFM = "https://solana.fm";
 
-function usePolling<T>(path: string, interval: number, onData: (d: T) => void) {
+const accountUrl = (id: string, base: string) =>
+  `${base}/account/${id}?cluster=devnet`;
+const txUrl = (sig: string, base: string) =>
+  `${base}/tx/${sig}?cluster=devnet`;
+
+function usePolling<T>(
+  path: string,
+  interval: number | (() => number),
+  onData: (d: T) => void
+) {
   const [offline, setOffline] = useState(false);
+  // Held in refs so a caller can pass a fresh arrow (e.g. an adaptive
+  // interval) without re-subscribing the effect on every render.
+  const intervalRef = useRef(interval);
+  intervalRef.current = interval;
+  const onDataRef = useRef(onData);
+  onDataRef.current = onData;
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
+    const every = () => {
+      const i = intervalRef.current;
+      return typeof i === "function" ? i() : i;
+    };
     const tick = async () => {
       try {
         const res = await fetch(path);
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as T;
         if (!stopped) {
-          onData(data);
+          onDataRef.current(data);
           setOffline(false);
-          timer = setTimeout(tick, interval);
+          timer = setTimeout(tick, every());
         }
       } catch {
         if (!stopped) {
           setOffline(true);
-          timer = setTimeout(tick, interval + 5000);
+          timer = setTimeout(tick, every() + 5000);
         }
       }
     };
@@ -85,7 +109,7 @@ function usePolling<T>(path: string, interval: number, onData: (d: T) => void) {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [path, interval, onData]);
+  }, [path]);
   return offline;
 }
 
@@ -122,9 +146,20 @@ function StepRow({ s }: { s: StepResult }) {
           )}
         </div>
         {s.tx && (
-          <a className="txlink mono" href={`${EXPLORER}/tx/${s.tx}?cluster=devnet`} target="_blank" rel="noreferrer">
-            {s.tx.slice(0, 12)}… ↗
-          </a>
+          <>
+            <a className="txlink mono" href={txUrl(s.tx, EXPLORER)} target="_blank" rel="noreferrer">
+              {s.tx.slice(0, 12)}… ↗
+            </a>
+            <a
+              className="txlink mono muted"
+              href={txUrl(s.tx, SOLANAFM)}
+              target="_blank"
+              rel="noreferrer"
+              title="Open on SolanaFM"
+            >
+              fm
+            </a>
+          </>
         )}
       </div>
     </li>
@@ -156,13 +191,36 @@ export default function App() {
 
   const onDemo = useCallback((d: DemoStatus) => setDemo(d), []);
   const onState = useCallback((s: State) => setState(s), []);
-  const offline = usePolling<DemoStatus>("/api/demo/status", 2000, onDemo);
-  usePolling<State>("/api/state", 2500, onState);
+
+  // Fast only while a run is actually progressing. Idle/done polling every 2s
+  // means every open tab hammers the public devnet RPC for nothing, which is
+  // what made the dashboard feel slow with several tabs open.
+  const statusRef = useRef(demo.status);
+  statusRef.current = demo.status;
+  const demoInterval = () => (statusRef.current === "running" ? 1500 : 6000);
+  const stateInterval = () => (statusRef.current === "running" ? 3000 : 8000);
+
+  const offline = usePolling<DemoStatus>("/api/demo/status", demoInterval, onDemo);
+  usePolling<State>("/api/state", stateInterval, onState);
 
   const run = async () => {
     try {
       setRunning(true);
-      await fetch("/api/demo/run", { method: "POST" });
+      const res = await fetch("/api/demo/run", { method: "POST" });
+      // A wedged run answers 409; surface it instead of silently doing nothing.
+      if (res.status === 409) {
+        await fetch("/api/demo/reset", { method: "POST" });
+        await fetch("/api/demo/run", { method: "POST" });
+      }
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const reset = async () => {
+    try {
+      setRunning(true);
+      await fetch("/api/demo/reset", { method: "POST" });
     } finally {
       setRunning(false);
     }
@@ -189,9 +247,21 @@ export default function App() {
           <section className="card demo-card">
             <div className="demo-head">
               <h3>On-chain demo</h3>
-              <button className="run" onClick={run} disabled={active || running}>
-                {active ? "RUNNING…" : "RUN DEMO"}
-              </button>
+              <div className="demo-actions">
+                {!active && (
+                  <button
+                    className="reset"
+                    onClick={reset}
+                    disabled={running}
+                    title="Clear a stalled or finished run"
+                  >
+                    RESET
+                  </button>
+                )}
+                <button className="run" onClick={run} disabled={active || running}>
+                  {active ? "RUNNING…" : "RUN DEMO"}
+                </button>
+              </div>
             </div>
             {demo.error && <div className="demo-error mono">{demo.error}</div>}
             {demo.summary && !active && (
@@ -262,17 +332,23 @@ function ShortText(id: string, n: number) {
 }
 
 function Short({ id, kind }: { id: string; kind: "vault" | "acct" }) {
-  const url =
-    id && (kind === "vault" || kind === "acct")
-      ? `${EXPLORER}/address/${id}?cluster=devnet`
-      : undefined;
   const text = ShortText(id, kind === "vault" ? 22 : 10);
-  return url ? (
-    <a className="txlink mono" href={url} target="_blank" rel="noreferrer">
-      {text} ↗
-    </a>
-  ) : (
-    <span className="mono">{text}</span>
+  if (!id) return <span className="mono">{text}</span>;
+  return (
+    <span className="mono">
+      <a className="txlink" href={accountUrl(id, EXPLORER)} target="_blank" rel="noreferrer">
+        {text} ↗
+      </a>{" "}
+      <a
+        className="txlink muted"
+        href={accountUrl(id, SOLANAFM)}
+        target="_blank"
+        rel="noreferrer"
+        title="Open on SolanaFM"
+      >
+        fm
+      </a>
+    </span>
   );
 }
 

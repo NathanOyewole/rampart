@@ -8,10 +8,25 @@ export const MOCK_PROGRAM_ID = new PublicKey(
   "2xbNzbkEZ65hLzi9TgdMBcncup6a5CA1qi3QLVTrwQ2p"
 );
 
-export const EXPLORER_URL = "https://explorer.solana.com";
+// explorer.solana.com returns HTTP 429 for a single IP after a few requests,
+// so it is not used as the default anywhere. Solscan is the primary
+// human-facing explorer; solana.fm is a fallback.
+export const EXPLORER_URL = "https://solscan.io";
+export const EXPLORER_URL_FALLBACK = "https://solana.fm";
 
-export const RPC_URL =
-  process.env.RAMPART_RPC ?? "https://api.devnet.solana.com";
+// RPC selection, in order of precedence:
+//   1. RAMPART_RPC          -- explicit URL (any provider)
+//   2. HELIUS_API_KEY       -- Helius devnet, free tier is enough for the demo
+//   3. devnet.rpcpool.com   -- keyless fallback
+//
+// The public api.devnet.solana.com endpoint is deliberately NOT the default:
+// a confirmed transaction there routinely took >6s and the endpoint is
+// aggressively rate-limited per IP, which stalled the multi-tx demo.
+export const RPC_URL = process.env.RAMPART_RPC
+  ? process.env.RAMPART_RPC
+  : process.env.HELIUS_API_KEY
+    ? `https://devnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+    : "https://devnet.rpcpool.com";
 
 export const VAULT_SEED = Buffer.from("rampart_vault");
 export const TREASURY_SEED = Buffer.from("rampart_treasury");
