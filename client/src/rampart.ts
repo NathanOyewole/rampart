@@ -221,13 +221,45 @@ export function describeError(e: unknown): ErrDesc {
   // not a program instruction, so there are no logs and no error code to read.
   // Anchor would have called this ConstraintSigner; name it without inventing
   // an on-chain code that was never returned.
-  let blob = "";
-  try {
-    blob = `${JSON.stringify(err)} ${String(msg ?? "")}`;
-  } catch {
-    blob = String(err);
-  }
-  if (/signature verification failed|SignatureFailure/i.test(blob)) {
+  //
+  // web3.js buries the real reason at varying depths: `Transaction simulation
+  // failed: Error processing Instruction 0: signature verification failed`,
+  // sometimes only on `cause`, and the thrown class is often
+  // SignatureVerificationError. Walk the object rather than trusting any one
+  // field, because guessing here means the demo's punchline beat renders as a
+  // bare "error".
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  const walk = (v: unknown, depth: number): void => {
+    if (v == null || depth > 5 || parts.length > 64) return;
+    if (typeof v === "string") {
+      parts.push(v);
+      return;
+    }
+    if (typeof v !== "object") {
+      parts.push(String(v));
+      return;
+    }
+    if (seen.has(v)) return;
+    seen.add(v);
+    const anyV = v as Record<string, unknown>;
+    if (typeof anyV.constructor?.name === "string") parts.push(anyV.constructor.name);
+    if (typeof anyV.name === "string") parts.push(anyV.name);
+    if (typeof anyV.message === "string") parts.push(anyV.message);
+    if (typeof anyV.reason === "string") parts.push(anyV.reason);
+    if (typeof anyV.errMsg === "string") parts.push(anyV.errMsg);
+    for (const k of Object.keys(anyV)) {
+      if (k === "stack" || k === "logs" || k === "programLogs") continue;
+      try {
+        walk(anyV[k], depth + 1);
+      } catch {
+        /* getters can throw */
+      }
+    }
+  };
+  walk(err, 0);
+  const blob = parts.join(" | ");
+  if (/signature verification failed|SignatureFailure|SignatureVerificationError/i.test(blob)) {
     return { name: "OwnerSignatureRequired (agent key cannot sign for the owner's vault)" };
   }
   const mentions = logs.join("\n");
@@ -505,7 +537,18 @@ export class RampartClient {
       })
       .transaction();
     tx.feePayer = this.payer.publicKey;
-    return this.provider.sendAndConfirm(tx, [signerKp]);
+    // `owner` is a required signer on withdraw. partialSign walks every signer
+    // slot and throws a JS TypeError if one has no signature yet, so it never
+    // reaches the chain. Sign the owner slot with a throwaway key: the
+    // transaction then fails chain-side as a signature verification failure,
+    // which is exactly the refusal this beat exists to demonstrate.
+    const decoy = Keypair.generate();
+    // Sign every required slot: the agent, the fee payer (this client's own
+    // key), and a decoy for `owner`. partialSign throws a JS TypeError if any
+    // signer slot is empty, which never reaches the chain; filling them makes
+    // the transaction fail chain-side as a signature verification failure --
+    // the refusal this beat exists to demonstrate.
+    return this.provider.sendAndConfirm(tx, [signerKp, this.payer, decoy]);
   }
 
   // ---- reads ----
