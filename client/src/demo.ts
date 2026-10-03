@@ -31,7 +31,10 @@ export interface DemoConfig {
 const DEFAULT_CFG: DemoConfig = {
   dailyUsd: 200,
   perTxUsd: 50,
-  depositSol: 1.2,
+  // Caps and transfer sizes below are quoted at the 2 SOL design point and
+  // scaled to whatever this deposits, so the demo runs on any sponsor balance
+  // instead of demanding a top-up.
+  depositSol: 0.5,
   fairPriceUsd: 200,
   pumpPriceUsd: 204,
   allowlist: [],
@@ -81,8 +84,10 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const FUND_SOL = 3;
 const FUND_FEE_RESERVE_SOL = 0.005;
-// Headroom above depositSol so the runner can pay transaction fees too.
-const FUND_SOL_BUFFER = 0.25;
+// Headroom above depositSol so the runner can pay transaction fees too. Solana
+// fees are ~0.000005 SOL, so 0.05 covers a full multi-tx run with room to spare
+// and keeps the sponsor's affordability check meaningful on a small balance.
+const FUND_SOL_BUFFER = 0.05;
 
 // Must exceed CONFIRM_TIMEOUT_MS (90s) so a live-but-slow step is never
 // reaped out from under itself. 5 confirmation attempts x 90s is the real
@@ -380,6 +385,14 @@ export class RampartDemo {
     this.client = new RampartClient(runner, sponsor.connection.rpcEndpoint);
     const c = this.client;
 
+    // Every cap and transfer amount in this demo is written against a 2 SOL
+    // deposit. Scale them together so the same beats stay internally
+    // consistent on a smaller vault instead of tripping InsufficientBalance.
+    const scale = this.cfg.depositSol / 2;
+    const amt = (n: number) => sol(n * scale);
+    const dailyUsd = this.cfg.dailyUsd * scale;
+    const perTxUsd = this.cfg.perTxUsd * scale;
+
     const reclaim = async () => {
       if (!this.vault) return;
       try {
@@ -421,19 +434,19 @@ export class RampartDemo {
       this.rec("info", "mock oracle feed", `feed ${feed.publicKey.toBase58()} at $${this.cfg.fairPriceUsd}`);
 
       const { vault, sig } = await c.initVault(
-        Math.round(this.cfg.dailyUsd * 1e6),
-        Math.round(this.cfg.perTxUsd * 1e6),
+        Math.round(dailyUsd * 1e6),
+        Math.round(perTxUsd * 1e6),
         feed.publicKey
       );
       this.vault = vault;
-      this.rec("ok", "init_vault", `vault ${vault.toBase58()} · caps $${this.cfg.dailyUsd}/day $${this.cfg.perTxUsd}/tx · reference price snapshot $${this.cfg.fairPriceUsd}`, { tx: sig });
+      this.rec("ok", "init_vault", `vault ${vault.toBase58()} · caps $${dailyUsd}/day $${perTxUsd}/tx · reference price snapshot $${this.cfg.fairPriceUsd}`, { tx: sig });
 
       const baseAllowlist = this.cfg.allowlist.length ? this.cfg.allowlist : [dest];
       // A DBC pool must be explicitly approved by the owner to be referenced.
       const allowlist = DBC_POOL ? [...baseAllowlist, DBC_POOL] : baseAllowlist;
       const pSig = await c.proposePolicy(vault, {
-        dailyUsdCapMicro: Math.round(this.cfg.dailyUsd * 1e6),
-        perTxUsdCapMicro: Math.round(this.cfg.perTxUsd * 1e6),
+        dailyUsdCapMicro: Math.round(dailyUsd * 1e6),
+        perTxUsdCapMicro: Math.round(perTxUsd * 1e6),
         maxSlippageBps: 100,
         epochLenSlots: 2160,
         allowlist,
@@ -471,13 +484,13 @@ export class RampartDemo {
 
       await this.attempt(
         "guard: allowlisted transfer 0.1 SOL",
-        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.1)),
+        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.1)),
         { detail: "0.1 SOL = $20 < per-tx $50 cap" }
       );
 
       await this.attempt(
         "guard: per-tx cap → blocked",
-        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.3)),
+        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.3)),
         { expectReject: true }
       );
 
@@ -486,7 +499,7 @@ export class RampartDemo {
 
       await this.attempt(
         "guard: price deviation → blocked",
-        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.1)),
+        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.1)),
         { expectReject: true }
       );
 
@@ -496,7 +509,7 @@ export class RampartDemo {
       const rand = Keypair.generate().publicKey;
       await this.attempt(
         "guard: non-allowlisted destination → blocked",
-        () => c.guardedTransfer(vault, agent, rand, feed.publicKey, sol(0.1)),
+        () => c.guardedTransfer(vault, agent, rand, feed.publicKey, amt(0.1)),
         { expectReject: true }
       );
 
@@ -506,19 +519,19 @@ export class RampartDemo {
   // crosses the $200 daily ceiling while every single transfer stays legal.
   await this.attempt(
     "guard: daily spend 1 of 4",
-    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.24)),
   );
   await this.attempt(
     "guard: daily spend 2 of 4",
-    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.24)),
   );
   await this.attempt(
     "guard: daily spend 3 of 4",
-    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.24)),
   );
   await this.attempt(
     "guard: daily cap blocked",
-    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.24)),
     { expectReject: true }
   );
 
@@ -539,7 +552,7 @@ export class RampartDemo {
         await this.attemptEither(
           "guard: DBC-gated transfer 0.05 SOL",
           () =>
-            c.guardedDbcTransfer(vault, agent, dest, feed.publicKey, pool, config, sol(0.05))
+            c.guardedDbcTransfer(vault, agent, dest, feed.publicKey, pool, config, amt(0.05))
         );
       } else {
         this.rec(
@@ -553,13 +566,13 @@ export class RampartDemo {
 
       await this.attempt(
         "guard: frozen vault → blocked",
-        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.05)),
+        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, amt(0.05)),
         { expectReject: true }
       );
 
       await this.attempt(
         "guard: agent tries to withdraw → blocked",
-        () => c.withdrawAs(vault, agent, sol(0.1)),
+        () => c.withdrawAs(vault, agent, amt(0.1)),
         { expectReject: true }
       );
 
