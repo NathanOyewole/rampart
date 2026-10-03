@@ -1,5 +1,5 @@
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
-import { BN } from "@coral-xyz/anchor";
+import BN from "bn.js";
 import { RampartClient, describeError, spendPda, treasuryPubkey } from "./rampart.js";
 import { microToUsd, usdFromPyth, DBC_POOL, DBC_CONFIG } from "./env.js";
 import { policyPda } from "./rampart.js";
@@ -31,7 +31,7 @@ export interface DemoConfig {
 const DEFAULT_CFG: DemoConfig = {
   dailyUsd: 200,
   perTxUsd: 50,
-  depositSol: 2,
+  depositSol: 1.2,
   fairPriceUsd: 200,
   pumpPriceUsd: 204,
   allowlist: [],
@@ -64,6 +64,15 @@ const ERR_NAMES = new Map<number, string>([
   [6023, "DbcQuoteFailed"],
   [6024, "PoolPriceImpactTooHigh"],
   [6025, "PoolTooLate"],
+  // Anchor evaluates every `#[account(...)]` constraint before the handler
+  // body runs, so an authorisation denial surfaces as the constraint's own
+  // code rather than the program's error. Mapped so the UI can name it.
+  [2000, "AccountNotMutable (Anchor)"],
+  [2001, "HasOneFailed (Anchor)"],
+  [2002, "OwnerSignatureRequired (Anchor)"],
+  [2003, "ConstraintFailed (Anchor)"],
+  [2004, "NotAccountOwner (Anchor)"],
+  [2006, "SeedsMismatch (Anchor)"],
 ]);
 
 const priceRaw = (usd: number) => Math.round(usd * 1e8);
@@ -458,7 +467,7 @@ export class RampartDemo {
       const rSig = await c.registerAgent(vault, agent);
       this.rec("ok", "register_agent", `agent ${agent.publicKey.toBase58().slice(0, 8)}…`, { tx: rSig });
 
-      await this.attempt("deposit 2 SOL", () => c.deposit(vault, sol(this.cfg.depositSol)));
+      await this.attempt(`deposit ${this.cfg.depositSol} SOL`, () => c.deposit(vault, sol(this.cfg.depositSol)));
 
       await this.attempt(
         "guard: allowlisted transfer 0.1 SOL",
@@ -491,11 +500,27 @@ export class RampartDemo {
         { expectReject: true }
       );
 
-      await this.attempt(
-        "guard: daily cap → blocked",
-        () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.95)),
-        { expectReject: true }
-      );
+// The daily cap is cumulative, so one oversized transfer can only ever trip
+  // the per-tx cap and the daily path is never reached. Four transfers of $48
+  // (under the $50 per-tx cap): the first three fit both caps, the fourth
+  // crosses the $200 daily ceiling while every single transfer stays legal.
+  await this.attempt(
+    "guard: daily spend 1 of 4",
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+  );
+  await this.attempt(
+    "guard: daily spend 2 of 4",
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+  );
+  await this.attempt(
+    "guard: daily spend 3 of 4",
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+  );
+  await this.attempt(
+    "guard: daily cap blocked",
+    () => c.guardedTransfer(vault, agent, dest, feed.publicKey, sol(0.24)),
+    { expectReject: true }
+  );
 
       if (DBC_POOL && DBC_CONFIG) {
         // Bind to locals: TS will not carry the narrowing of imported consts

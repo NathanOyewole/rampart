@@ -1,6 +1,5 @@
 import {
   AnchorProvider,
-  BN,
   Idl,
   Program,
   Wallet,
@@ -14,6 +13,7 @@ import {
   LAMPORTS_PER_SOL,
   Signer,
 } from "@solana/web3.js";
+import BN from "bn.js";
 import { readFileSync } from "node:fs";
 import { KeypairWallet } from "./wallet.js";
 import {
@@ -217,6 +217,19 @@ export function describeError(e: unknown): ErrDesc {
     if (nm) return { name: nm[1].trim() };
   }
   const msg = err?.message;
+  // A required signer that never signed fails transaction-level sanitisation,
+  // not a program instruction, so there are no logs and no error code to read.
+  // Anchor would have called this ConstraintSigner; name it without inventing
+  // an on-chain code that was never returned.
+  let blob = "";
+  try {
+    blob = `${JSON.stringify(err)} ${String(msg ?? "")}`;
+  } catch {
+    blob = String(err);
+  }
+  if (/signature verification failed|SignatureFailure/i.test(blob)) {
+    return { name: "OwnerSignatureRequired (agent key cannot sign for the owner's vault)" };
+  }
   const mentions = logs.join("\n");
   const codeMatch = mentions.match(/instruction at offset[\s\S]*?(\d+)/);
   if (codeMatch) return { code: Number(codeMatch[1]) };
@@ -478,10 +491,14 @@ export class RampartClient {
   async withdrawAs(vault: PublicKey, signerKp: Keypair, amountLamports: number) {
     const v = await this.fetchVault(vault);
     const treasury = treasuryPubkey(vault, v.treasuryBump);
+    // `withdraw` derives the vault PDA from `owner.key()` (see withdraw.rs), so
+    // the `owner` account must be the real vault owner or the seeds check fails
+    // first and the attempt proves nothing. Pass the owner, sign with the agent:
+    // Anchor then rejects for the reason that actually matters.
     const tx = await this.program.methods
       .withdraw(new BN(amountLamports))
       .accounts({
-        owner: signerKp.publicKey,
+        owner: v.owner,
         vault,
         treasury,
         systemProgram: SystemProgram.programId,
