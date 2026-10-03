@@ -19,10 +19,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const redact = (endpoint: string) => endpoint.replace(/([?&]api-key=)[^&]*/gi, "$1REDACTED");
+
 app.get("/healthz", (_req, res) => {
   res.json({
     ok: true,
-    rpc: client.connection.rpcEndpoint,
+    rpc: redact(client.connection.rpcEndpoint),
     program: PROGRAM_ID.toBase58(),
     mockProgram: MOCK_PROGRAM_ID.toBase58(),
     owner: payer.publicKey.toBase58(),
@@ -40,7 +42,19 @@ app.get("/api/state", async (_req, res) => {
   }
 });
 
-app.post("/api/demo/run", async (_req, res) => {
+// RUN and RESET spend the sponsor wallet, so they stay owner-only unless a token
+// is explicitly configured for a shared/public judge link.
+const runToken = process.env.RAMPART_RUN_TOKEN;
+const gate = (req: express.Request, res: express.Response): boolean => {
+  if (!runToken) return true;
+  const given = req.get("x-rampart-token") ?? req.query.token;
+  if (given === runToken) return true;
+  res.status(401).json({ error: "run token required" });
+  return false;
+};
+
+app.post("/api/demo/run", async (req, res) => {
+  if (!gate(req, res)) return;
   demo.reapStalledRun();
   if (demo.status === "running") {
     res.status(409).json({ error: "demo already running" });
@@ -57,7 +71,8 @@ app.post("/api/demo/run", async (_req, res) => {
 // Recovers a wedged run without a server restart. A run that has produced no
 // step for STALL_MS cannot still be making progress: every step awaits a devnet
 // confirmation, and those are individually timeboxed now.
-app.post("/api/demo/reset", (_req, res) => {
+app.post("/api/demo/reset", (req, res) => {
+  if (!gate(req, res)) return;
   const was = demo.status;
   demo.reset();
   res.json({ ok: true, was, status: demo.status });
@@ -87,7 +102,7 @@ if (existsSync(webDist)) {
 
 app.listen(PORT, () => {
   console.log(`rampart api on http://localhost:${PORT}`);
-  console.log(`rpc ${client.connection.rpcEndpoint}`);
+  console.log(`rpc ${redact(client.connection.rpcEndpoint)}`);
   console.log(`owner ${payer.publicKey.toBase58()}`);
   if (!existsSync(webDist)) {
     console.log("web not built yet — run `pnpm build:web`");
