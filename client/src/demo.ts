@@ -106,6 +106,7 @@ export class RampartDemo {
   feed?: PublicKey;
   agent?: Keypair;
   destination?: PublicKey;
+  private destinationKp?: Keypair;
   vault?: PublicKey;
 
   constructor(client: RampartClient, cfg: Partial<DemoConfig> = {}) {
@@ -242,6 +243,9 @@ export class RampartDemo {
     );
     await this.client.provider.sendAndConfirm(tx, [kp]);
     this.destination = kp.publicKey;
+    // Keep the keypair: every accepted transfer lands here, so without it the
+    // demo's spend is unrecoverable and repeated RUNs drain the sponsor.
+    this.destinationKp = kp;
     return kp.publicKey;
   }
 
@@ -422,6 +426,26 @@ export class RampartDemo {
         }
       } catch {
         /* best effort */
+      }
+      // Sweep the destination account too. The four accepted transfers really
+      // do leave the vault, and this keypair is the only way to get that SOL
+      // back to the sponsor; without it every RUN costs ~0.2 SOL permanently.
+      const dk = this.destinationKp;
+      if (dk) {
+        try {
+          const dBal = await c.connection.getBalance(dk.publicKey);
+          if (dBal > 0) {
+            const sig = await c.provider.sendAndConfirm(
+              new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: dk.publicKey, toPubkey: sponsorKey, lamports: dBal })
+              ),
+              [dk]
+            );
+            this.rec("info", "runner reclaims destination", `swept ${(dBal / LAMPORTS_PER_SOL).toFixed(3)} SOL of demo spend back to sponsor`, { tx: sig });
+          }
+        } catch {
+          /* best effort */
+        }
       }
     };
 
