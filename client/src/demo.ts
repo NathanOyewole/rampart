@@ -34,7 +34,7 @@ const DEFAULT_CFG: DemoConfig = {
   // Caps and transfer sizes below are quoted at the 2 SOL design point and
   // scaled to whatever this deposits, so the demo runs on any sponsor balance
   // instead of demanding a top-up.
-  depositSol: 0.5,
+  depositSol: 0.4,
   fairPriceUsd: 200,
   pumpPriceUsd: 204,
   allowlist: [],
