@@ -262,6 +262,17 @@ export function describeError(e: unknown): ErrDesc {
   if (/signature verification failed|SignatureFailure|SignatureVerificationError/i.test(blob)) {
     return { name: "OwnerSignatureRequired (agent key cannot sign for the owner's vault)" };
   }
+  // web3.js `partialSign` throws a bare TypeError when a required signer slot has
+  // no signature to coerce: `Cannot read properties of undefined (reading
+  // 'toString')`. It is thrown client-side, before the transaction is ever sent,
+  // so the chain returns nothing at all -- no logs, no custom code. Same root
+  // cause as above (the agent holds no key for the owner's signer slot), and it
+  // must be labelled without inventing an on-chain error number.
+  if (
+    /cannot read propert(?:y|ies) (?:of undefined \(reading 'toString'\)|'toString' of undefined)/i.test(blob)
+  ) {
+    return { name: "OwnerSignatureRequired (agent key cannot sign for the owner's vault)" };
+  }
   const mentions = logs.join("\n");
   const codeMatch = mentions.match(/instruction at offset[\s\S]*?(\d+)/);
   if (codeMatch) return { code: Number(codeMatch[1]) };
