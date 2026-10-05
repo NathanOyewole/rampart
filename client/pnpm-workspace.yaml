@@ -1,4 +1,9 @@
 packages: []
+# The container image builds node_modules as root but runs the app as an
+# unprivileged user, so pnpm's pre-run dependency verification fails with
+# EACCES on /app/node_modules/.bin on every boot. Dependencies are already
+# installed at image build time, so skip the redundant check.
+verifyDepsBeforeRun: false
 allowBuilds:
   esbuild: true
   bufferutil: true

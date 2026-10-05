@@ -22,11 +22,25 @@ export const EXPLORER_URL_FALLBACK = "https://solana.fm";
 // The public api.devnet.solana.com endpoint is deliberately NOT the default:
 // a confirmed transaction there routinely took >6s and the endpoint is
 // aggressively rate-limited per IP, which stalled the multi-tx demo.
-export const RPC_URL = process.env.RAMPART_RPC
-  ? process.env.RAMPART_RPC
-  : process.env.HELIUS_API_KEY
-    ? `https://devnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
-    : "https://devnet.rpcpool.com";
+function resolveRpcUrl(): string {
+  const raw =
+    process.env.RAMPART_RPC ||
+    (process.env.HELIUS_API_KEY
+      ? `https://devnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+      : "https://devnet.rpcpool.com");
+  // Dashboard env fields commonly carry stray whitespace or wrapping quotes from
+  // a copy-paste. web3.js asserts on the raw string and dies with a message
+  // that never shows the offending value, so normalise and fail legibly.
+  const url = raw.trim().replace(/^["']|["']$/g, "").trim();
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error(
+      `RAMPART_RPC must start with http:// or https:// (got ${JSON.stringify(raw.slice(0, 80))})`
+    );
+  }
+  return url;
+}
+
+export const RPC_URL = resolveRpcUrl();
 
 export const VAULT_SEED = Buffer.from("rampart_vault");
 export const TREASURY_SEED = Buffer.from("rampart_treasury");
