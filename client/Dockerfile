@@ -3,7 +3,11 @@
 # to be a process alive after the build finishes.
 FROM node:22-bookworm-slim
 
-RUN corepack enable
+# pnpm is installed globally rather than shimmed through corepack. The corepack
+# shim re-resolves the package manager on every invocation, including at
+# runtime, and its cache mkdir is not recursive -- so `pnpm start` inside the
+# container died on ENOENT for /app/.cache before the server ever booted.
+RUN npm install -g pnpm@12.9.1
 
 WORKDIR /app
 
