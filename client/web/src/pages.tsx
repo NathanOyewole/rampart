@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CHANGELOG, EMPTY_BEFORE, type Scope } from "./changelog";
+import { CHANGELOG, type Scope } from "./changelog";
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -32,10 +32,6 @@ export function ChangelogPage() {
     <Shell>
       <section className="card page-card">
         <h3>Changelog</h3>
-        <p className="step-detail">
-          What changed on main, 2 Sep–7 Oct 2026. Live means the hosted demo or the deployed program. Source means the commit is real and the devnet binary did not move, because upgrade authority was renounced.
-        </p>
-        <p className="step-detail">{EMPTY_BEFORE}</p>
         {CHANGELOG.map((day) => (
           <article key={day.date} className="log-day">
             <h4 className="mono">{day.date}</h4>
