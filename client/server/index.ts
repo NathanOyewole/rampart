@@ -32,6 +32,65 @@ app.get("/healthz", (_req, res) => {
   });
 });
 
+
+app.get("/api/status", async (_req, res) => {
+  const started = Date.now();
+  const checks: { name: string; ok: boolean; level: "ok" | "warn" | "down"; detail: string }[] = [];
+  let heliusOk = false;
+  let programOk = false;
+  try {
+    const slot = await client.connection.getSlot("confirmed");
+    heliusOk = true;
+    checks.push({ name: "helius", ok: true, level: "ok", detail: `slot ${slot}` });
+  } catch (e) {
+    checks.push({ name: "helius", ok: false, level: "down", detail: String(e).slice(0, 180) });
+  }
+  try {
+    const info = await client.connection.getAccountInfo(PROGRAM_ID);
+    programOk = !!info;
+    checks.push({
+      name: "program",
+      ok: programOk,
+      level: programOk ? "ok" : "down",
+      detail: programOk ? "account present on devnet" : "missing on this cluster",
+    });
+  } catch (e) {
+    checks.push({ name: "program", ok: false, level: "down", detail: String(e).slice(0, 180) });
+  }
+  try {
+    const bal = await client.connection.getBalance(payer.publicKey, "confirmed");
+    const sol = bal / 1_000_000_000;
+    const thin = sol < 0.08;
+    checks.push({
+      name: "sponsor",
+      ok: !thin,
+      level: thin ? "warn" : "ok",
+      detail: `${sol.toFixed(3)} SOL`,
+    });
+  } catch (e) {
+    checks.push({ name: "sponsor", ok: false, level: "warn", detail: String(e).slice(0, 180) });
+  }
+  checks.push({
+    name: "demo",
+    ok: demo.status !== "failed",
+    level: demo.status === "failed" ? "warn" : "ok",
+    detail: demo.error ? `${demo.status}: ${demo.error.slice(0, 160)}` : demo.status,
+  });
+  const state = !heliusOk || !programOk ? "down" : checks.some((c) => c.level === "warn") ? "degraded" : "operational";
+  res.status(state === "down" ? 503 : 200).json({
+    ok: state === "operational",
+    state,
+    rpc: redact(client.connection.rpcEndpoint),
+    program: PROGRAM_ID.toBase58(),
+    mockProgram: MOCK_PROGRAM_ID.toBase58(),
+    owner: payer.publicKey.toBase58(),
+    uptime: Math.round(process.uptime()),
+    checkedAt: new Date().toISOString(),
+    latencyMs: Date.now() - started,
+    checks,
+  });
+});
+
 app.get("/api/state", async (_req, res) => {
   try {
     res.json(await demo.readState());
