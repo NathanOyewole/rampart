@@ -119,7 +119,6 @@ export function StatusPage() {
             <div className="row"><span className="k">checked</span><span className="v mono">{body.checkedAt}</span></div>
             <div className="row"><span className="k">latency</span><span className="v mono">{body.latencyMs} ms</span></div>
             <div className="row"><span className="k">uptime</span><span className="v mono">{body.uptime}s</span></div>
-            <div className="row"><span className="k">rpc</span><span className="v mono">{body.rpc}</span></div>
             <div className="row"><span className="k">program</span><span className="v mono">{body.program}</span></div>
             <div className="row"><span className="k">sponsor</span><span className="v mono">{body.owner}</span></div>
             <ul className="steps">
