@@ -343,21 +343,47 @@ export class RampartDemo {
     // 0.005 SOL for a wallet holding 2.8. Trusting one read makes the demo
     // refuse to start for no reason, so retry and take the max.
     const needed = sol(this.cfg.depositSol + FUND_FEE_RESERVE_SOL + FUND_SOL_BUFFER);
+    // Stay on the configured connection (Helius). A single getBalance has
+    // reported 0.005 SOL for this sponsor while a second method on the same
+    // endpoint disagreed. The comment above said "take the max"; the loop
+    // kept the last read. Take the max of getBalance and getAccountInfo.
+    const readBal = async () => {
+      const [bal, info] = await Promise.all([
+        sponsor.connection.getBalance(sponsorKey, "confirmed").catch(() => 0),
+        sponsor.connection.getAccountInfo(sponsorKey, "confirmed").catch(() => null),
+      ]);
+      return Math.max(bal, info?.lamports ?? 0);
+    };
     let affordable = 0;
     for (let attempt = 0; attempt < 3; attempt++) {
-      affordable = await sponsor.connection.getBalance(sponsorKey);
+      const seen = await readBal();
+      affordable = Math.max(affordable, seen);
       if (affordable >= needed) break;
       if (attempt < 2) {
         this.rec(
           "info",
           "re-reading sponsor balance",
-          `RPC reported ${(affordable / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
+          `Helius reported ${(seen / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
             `need ~${(needed / LAMPORTS_PER_SOL).toFixed(3)} -- retrying`
         );
         await wait(1200);
       }
     }
-    const target = needed;
+
+    const overhead = sol(FUND_FEE_RESERVE_SOL + FUND_SOL_BUFFER);
+    const room = affordable - overhead;
+    const MIN_DEPOSIT = sol(0.05);
+    if (this.cfg.fundSol == null && room >= MIN_DEPOSIT && room < sol(this.cfg.depositSol)) {
+      const fitted = Math.floor((room / LAMPORTS_PER_SOL) * 100) / 100;
+      this.rec(
+        "info",
+        "sizing deposit to sponsor",
+        `configured ${this.cfg.depositSol} SOL, funding ${fitted} SOL so the run still reaches the guards`
+      );
+      this.cfg.depositSol = fitted;
+    }
+
+    const target = sol(this.cfg.depositSol + FUND_FEE_RESERVE_SOL + FUND_SOL_BUFFER);
     const fundLamports =
       this.cfg.fundSol != null
         ? sol(this.cfg.fundSol)
@@ -366,10 +392,9 @@ export class RampartDemo {
     if (fundLamports < sol(this.cfg.depositSol)) {
       this.status = "failed";
       this.error =
-        `sponsor wallet holds ${(affordable / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
-        `needs about ${(this.cfg.depositSol + FUND_FEE_RESERVE_SOL).toFixed(3)} ` +
-        `to fund a runner and deposit ${this.cfg.depositSol} SOL -- top it up ` +
-        `(devnet: solana airdrop 5) or lower depositSol`;
+        `Helius reports ${sponsorKey.toBase58()} holds ${(affordable / LAMPORTS_PER_SOL).toFixed(4)} SOL. ` +
+        `Need about ${(this.cfg.depositSol + FUND_FEE_RESERVE_SOL).toFixed(3)} SOL to fund a runner and deposit ${this.cfg.depositSol} SOL. ` +
+        `Check HELIUS_API_KEY on the host, then airdrop to that address on devnet.`;
       this.rec("error", "cannot start: sponsor underfunded", this.error);
       throw new Error(this.error);
     }
