@@ -6,7 +6,7 @@ The agent signs. The program decides. Funds sit in program-owned PDAs, and the p
 
 Live demo: [rampart.pxxl.click](https://rampart.pxxl.click)
 
-First commit 22 September 2026 (`e993972`, the policy vault and CI). World's Fair deadline 12 October 2026. There is no earlier history, and there was no 25 September submission.
+First commit 22 September 2026 (`e993972`, the policy vault and CI). Submitted to Colosseum World's Fair on 9 October 2026. No earlier history.
 
 ## What is live
 
