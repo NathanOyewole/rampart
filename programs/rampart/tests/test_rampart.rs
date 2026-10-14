@@ -34,6 +34,7 @@ const E_POOL_NOT_ALLOWED: u32 = 6022;
 const E_DBC_QUOTE_FAILED: u32 = 6023;
 const E_POOL_IMPACT_TOO_HIGH: u32 = 6024;
 const E_POOL_TOO_LATE: u32 = 6025;
+const E_FEED_MISMATCH: u32 = 6026;
 
 const SOL_PRICE: i64 = 20_000_000_000;
 const SOL_EXPO: i32 = -8;
@@ -541,10 +542,9 @@ fn oracle_pump_outside_slippage_is_blocked() {
     env.svm.warp_to_slot(200);
     apply_policy_ok(&mut env);
 
-    let bad_feed = Pubkey::new_unique();
     env.svm
         .set_account(
-            bad_feed,
+            env.feed,
             Account {
                 lamports: 1_000_000_000,
                 data: feed_data(SOL_PRICE * 2, SOL_EXPO, 1),
@@ -557,7 +557,7 @@ fn oracle_pump_outside_slippage_is_blocked() {
 
     let before = treasury_lamports(&env);
     assert_custom(
-        guarded_transfer(&mut env, 5_000_000_000, dest, bad_feed),
+        guarded_transfer(&mut env, 5_000_000_000, dest, env.feed),
         E_DEV_TOO_HIGH,
     );
     assert_eq!(treasury_lamports(&env), before);
@@ -571,10 +571,9 @@ fn halted_feed_is_blocked() {
     env.svm.warp_to_slot(200);
     apply_policy_ok(&mut env);
 
-    let halted_feed = Pubkey::new_unique();
     env.svm
         .set_account(
-            halted_feed,
+            env.feed,
             Account {
                 lamports: 1_000_000_000,
                 data: feed_data(SOL_PRICE, SOL_EXPO, 2),
@@ -586,7 +585,7 @@ fn halted_feed_is_blocked() {
         .unwrap();
 
     assert_custom(
-        guarded_transfer(&mut env, 5_000_000_000, dest, halted_feed),
+        guarded_transfer(&mut env, 5_000_000_000, dest, env.feed),
         E_NOT_TRADING,
     );
 }
@@ -893,4 +892,32 @@ fn dbc_guard_still_honours_the_daily_cap() {
         E_DAILY_CAP,
     );
     assert_eq!(treasury_lamports(&env), before - DBC_TRADE);
+}
+
+#[test]
+fn agent_cannot_swap_the_pinned_feed() {
+    let mut env = setup();
+    let dest = Pubkey::new_unique();
+    propose_allowlist(&mut env, vec![dest], DAILY_CAP_MICRO, PER_TX_CAP_MICRO, 100, EPOCH_SLOTS);
+    env.svm.warp_to_slot(200);
+    apply_policy_ok(&mut env);
+
+    let other = Pubkey::new_unique();
+    env.svm
+        .set_account(
+            other,
+            Account {
+                lamports: 1_000_000_000,
+                data: feed_data(SOL_PRICE, SOL_EXPO, 1),
+                owner: system_program::ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        )
+        .unwrap();
+
+    assert_custom(
+        guarded_transfer(&mut env, 1_000_000_000, dest, other),
+        E_FEED_MISMATCH,
+    );
 }
