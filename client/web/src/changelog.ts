@@ -14,6 +14,13 @@ export interface Day {
 /** Curated from main, 2 Sep–7 Oct 2026. First commit is 22 Sep. No history before that. */
 export const CHANGELOG: Day[] = [
   {
+    date: "2026-10-14",
+    entries: [
+      { scope: "deploy", text: "Server closes the public demo run and redacts the Helius key out of error strings. A run now needs RAMPART_RUN_TOKEN." },
+      { scope: "source", text: "Feed is pinned at init. A spend that passes a different account is refused. Owner can refresh the reference from that same feed. Not in the deployed binary." },
+    ],
+  },
+  {
     date: "2026-10-07",
     entries: [
       { scope: "live", sha: "145de64", text: "Run stays on the configured Helius endpoint. A single getBalance that reported 0.005 SOL no longer aborts the demo. The check keeps the max of getBalance and getAccountInfo, and only shrinks the deposit if that read is actually thin." },
