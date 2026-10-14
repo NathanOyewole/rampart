@@ -73,6 +73,10 @@ pub mod rampart {
         handle_apply_policy(ctx)
     }
 
+    pub fn refresh_reference(ctx: Context<RefreshReference>) -> Result<()> {
+        handle_refresh_reference(ctx)
+    }
+
     pub fn guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Result<()> {
         handle_guarded_transfer(ctx, amount)
     }
