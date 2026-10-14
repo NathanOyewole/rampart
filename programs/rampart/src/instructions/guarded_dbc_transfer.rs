@@ -120,6 +120,9 @@ pub fn handle_guarded_dbc_transfer(ctx: Context<GuardedDbcTransfer>, amount: u64
     }
 
     // --- Pyth SOL/USD checks: identical to guarded_transfer ---------------
+    if ctx.accounts.price_feed.key() != ctx.accounts.vault.price_feed {
+        return err!(ErrorCode::FeedMismatch);
+    }
     let feed_data = ctx.accounts.price_feed.try_borrow_data()?;
     let price = pyth::decode_price(&feed_data)?;
     drop(feed_data);
