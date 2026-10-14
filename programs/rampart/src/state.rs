@@ -12,6 +12,8 @@ pub struct Vault {
     pub reference_price: i64,
     pub reference_expo: i32,
     pub timelock_slots: u64,
+    /// Feed pinned at init. Later spends must pass this account, not another.
+    pub price_feed: Pubkey,
 }
 
 #[account]
