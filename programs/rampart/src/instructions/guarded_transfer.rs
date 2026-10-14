@@ -67,6 +67,9 @@ pub fn handle_guarded_transfer(ctx: Context<GuardedTransfer>, amount: u64) -> Re
         return err!(ErrorCode::InsufficientBalance);
     }
 
+    if ctx.accounts.price_feed.key() != ctx.accounts.vault.price_feed {
+        return err!(ErrorCode::FeedMismatch);
+    }
     let feed_data = ctx.accounts.price_feed.try_borrow_data()?;
     let price = pyth::decode_price(&feed_data)?;
     drop(feed_data);
