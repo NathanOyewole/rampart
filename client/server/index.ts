@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import { timingSafeEqual } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -19,7 +20,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const redact = (endpoint: string) => endpoint.replace(/([?&]api-key=)[^&]*/gi, "$1REDACTED");
+const redact = (value: string) => value.replace(/([?&]api-key=)[^&\s]*/gi, "$1REDACTED");
 
 app.get("/healthz", (_req, res) => {
   res.json({
@@ -43,7 +44,7 @@ app.get("/api/status", async (_req, res) => {
     heliusOk = true;
     checks.push({ name: "helius", ok: true, level: "ok", detail: `slot ${slot}` });
   } catch (e) {
-    checks.push({ name: "helius", ok: false, level: "down", detail: String(e).slice(0, 180) });
+    checks.push({ name: "helius", ok: false, level: "down", detail: redact(String(e)).slice(0, 180) });
   }
   try {
     const info = await client.connection.getAccountInfo(PROGRAM_ID);
@@ -55,7 +56,7 @@ app.get("/api/status", async (_req, res) => {
       detail: programOk ? "account present on devnet" : "missing on this cluster",
     });
   } catch (e) {
-    checks.push({ name: "program", ok: false, level: "down", detail: String(e).slice(0, 180) });
+    checks.push({ name: "program", ok: false, level: "down", detail: redact(String(e)).slice(0, 180) });
   }
   try {
     const bal = await client.connection.getBalance(payer.publicKey, "confirmed");
@@ -68,13 +69,13 @@ app.get("/api/status", async (_req, res) => {
       detail: `${sol.toFixed(3)} SOL`,
     });
   } catch (e) {
-    checks.push({ name: "sponsor", ok: false, level: "warn", detail: String(e).slice(0, 180) });
+    checks.push({ name: "sponsor", ok: false, level: "warn", detail: redact(String(e)).slice(0, 180) });
   }
   checks.push({
     name: "demo",
     ok: demo.status !== "failed",
     level: demo.status === "failed" ? "warn" : "ok",
-    detail: demo.error ? `${demo.status}: ${demo.error.slice(0, 160)}` : demo.status,
+    detail: demo.error ? redact(`${demo.status}: ${demo.error}`).slice(0, 160) : demo.status,
   });
   const state = !heliusOk || !programOk ? "down" : checks.some((c) => c.level === "warn") ? "degraded" : "operational";
   res.status(state === "down" ? 503 : 200).json({
@@ -97,17 +98,26 @@ app.get("/api/state", async (_req, res) => {
   } catch (e) {
     const err = String(e);
     const messageOverride = err.includes("no program") ? "program not deployed on this network yet" : undefined;
-    res.status(503).json({ error: messageOverride ?? err });
+    res.status(503).json({ error: messageOverride ?? redact(err) });
   }
 });
 
 // RUN and RESET spend the sponsor wallet, so they stay owner-only unless a token
 // is explicitly configured for a shared/public judge link.
 const runToken = process.env.RAMPART_RUN_TOKEN;
+const tokensMatch = (given: string, expected: string) => {
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+};
 const gate = (req: express.Request, res: express.Response): boolean => {
-  if (!runToken) return true;
-  const given = req.get("x-rampart-token") ?? req.query.token;
-  if (given === runToken) return true;
+  if (!runToken) {
+    res.status(401).json({ error: "run token not configured" });
+    return false;
+  }
+  const given = String(req.get("x-rampart-token") ?? req.query.token ?? "");
+  if (tokensMatch(given, runToken)) return true;
   res.status(401).json({ error: "run token required" });
   return false;
 };
@@ -141,8 +151,8 @@ app.get("/api/demo/status", (_req, res) => {
   demo.reapStalledRun();
   res.json({
     status: demo.status,
-    error: demo.error,
-    steps: demo.steps,
+    error: demo.error ? redact(demo.error) : demo.error,
+    steps: demo.steps.map((s) => ({ ...s, detail: redact(s.detail) })),
     summary: {
       ok: demo.steps.filter((s) => s.status === "ok").length,
       rejected: demo.steps.filter((s) => s.status === "rejected").length,
