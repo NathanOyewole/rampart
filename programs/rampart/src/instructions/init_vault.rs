@@ -61,6 +61,7 @@ pub fn handle_init_vault(
     vault.reference_price = price.price;
     vault.reference_expo = price.expo;
     vault.timelock_slots = DEFAULT_TIMELOCK_SLOTS;
+    vault.price_feed = ctx.accounts.price_feed.key();
 
     let policy = &mut ctx.accounts.policy;
     policy.vault = ctx.accounts.vault.key();
