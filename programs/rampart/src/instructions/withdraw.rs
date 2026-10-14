@@ -26,6 +26,8 @@ pub struct Withdraw<'info> {
     pub system_program: Program<'info, System>,
 }
 
+// Freeze stops the agent. It does not stop the owner. Withdraw is the
+// recovery path, and the owner is the key that set the freeze.
 pub fn handle_withdraw(ctx: Context<Withdraw>, amount: u64) -> Result<()> {
     if amount == 0 {
         return err!(ErrorCode::AmountZero);
