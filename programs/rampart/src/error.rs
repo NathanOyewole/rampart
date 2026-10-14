@@ -54,4 +54,7 @@ pub enum ErrorCode {
     PoolPriceImpactTooHigh,
     #[msg("DBC pool is past the maximum curve progress - too close to graduation to size against")]
     PoolTooLate,
+    #[msg("Price feed is not the feed pinned at vault init")]
+    FeedMismatch,
 }
+
