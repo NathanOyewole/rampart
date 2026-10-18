@@ -11,6 +11,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="hdr-right">
           <a className="pill" href="/">demo</a>
+          <a className="pill" href="/docs">docs</a>
           <a className="pill" href="/changelog">changelog</a>
           <a className="pill" href="/status">status</a>
         </nav>
