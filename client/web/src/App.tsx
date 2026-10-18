@@ -236,6 +236,7 @@ export default function App() {
           <span className="tag">policy vaults for trading agents</span>
         </div>
         <div className="hdr-right">
+          <a className="pill" href="/docs">docs</a>
           <a className="pill" href="/changelog">changelog</a>
           <a className="pill" href="/status">status</a>
           {offline && <span className="pill offline">API OFFLINE · RETRYING</span>}
