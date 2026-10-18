@@ -176,3 +176,23 @@ a.logo, a.pill { text-decoration: none; }
 .status-banner.operational { color: var(--green); }
 .status-banner.degraded { color: var(--amber); }
 .status-banner.down { color: var(--red); }
+
+.docs-status {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.docs-status div { display: flex; flex-direction: column; gap: 2px; }
+.docs-status dt { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.docs-status dd { margin: 0; }
+.docs-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.docs-nav a { color: var(--muted); text-decoration: none; font-size: 13px; }
+.docs-nav a.on, .docs-nav a:hover { color: var(--text); }
+.docs-body p, .docs-body li { color: var(--text); }
+.docs-body a { color: var(--accent); }
+@media (max-width: 640px) {
+  .docs-status { grid-template-columns: 1fr; }
+}
